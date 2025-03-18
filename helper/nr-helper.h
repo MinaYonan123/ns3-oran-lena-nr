@@ -948,7 +948,11 @@ class NrHelper : public Object
                          Ptr<NetDevice> ueDev,
                          Ptr<NetDevice> sourceGnbDev,
                          uint16_t targetCellId);
-
+    bool m_e2mode_nr;
+    bool m_e2mode_lte;
+    std::string m_e2ip;
+    uint16_t m_e2port;
+    uint16_t m_e2localPort;
   private:
     bool m_enableMimoFeedback{false}; ///< Let UE compute MIMO feedback with PMI and RI
     ObjectFactory m_pmSearchFactory;  ///< Factory for precoding matrix search algorithm

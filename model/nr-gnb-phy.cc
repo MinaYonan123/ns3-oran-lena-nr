@@ -621,6 +621,7 @@ void
 NrGnbPhy::SetTxPower(double pow)
 {
     m_txPower = pow;
+    NS_LOG_DEBUG("TxPower1: " << pow);
 }
 
 double

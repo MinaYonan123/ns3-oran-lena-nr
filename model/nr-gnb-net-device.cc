@@ -17,6 +17,8 @@
 #include <ns3/log.h>
 #include <ns3/object-map.h>
 #include <ns3/pointer.h>
+#include "encode_e2apv1.hpp"
+#include <ns3/double.h>
 
 namespace ns3
 {
@@ -46,13 +48,37 @@ NrGnbNetDevice::GetTypeId()
                           "The RRC layer associated with the gNB",
                           PointerValue(),
                           MakePointerAccessor(&NrGnbNetDevice::m_rrc),
-                          MakePointerChecker<NrGnbRrc>());
+                          MakePointerChecker<NrGnbRrc>())
+            .AddAttribute ("CellId",
+                            "Cell Identifier",
+                            UintegerValue (0),
+                            MakeUintegerAccessor (&NrGnbNetDevice::m_cellId),
+                            MakeUintegerChecker<uint16_t> ()) 
+            .AddAttribute ("E2Termination",
+                            "The E2 termination object associated to this node",
+                            PointerValue (),
+                            MakePointerAccessor (&NrGnbNetDevice::SetE2Termination,
+                                                            &NrGnbNetDevice::GetE2Termination),
+                            MakePointerChecker <E2Termination> ())  
+            .AddAttribute ("EnableE2FileLogging",
+                         "If true, force E2 indication generation and write E2 fields in csv file",
+                         BooleanValue (false),
+                         MakeBooleanAccessor (&NrGnbNetDevice::m_forceE2FileLogging),
+                         MakeBooleanChecker ())
+            .AddAttribute ("KPM_E2functionID", "Function ID to subscribe", DoubleValue (2),
+                           MakeDoubleAccessor (&NrGnbNetDevice::e2_func_id),
+                           MakeDoubleChecker<double> ())
+            .AddAttribute("RC_E2functionID", "Function ID to subscribe", DoubleValue(3),
+                           MakeDoubleAccessor(&NrGnbNetDevice::rc_e2_func_id),
+                           MakeDoubleChecker<double>());               
     return tid;
 }
 
 NrGnbNetDevice::NrGnbNetDevice()
-    : m_cellId(0)
-{
+    : m_cellId(0),m_stopSendingMessages(false),
+         m_isReportingEnabled (false),
+     m_forceE2FileLogging (false)
+{    
     NS_LOG_FUNCTION(this);
 }
 
@@ -79,6 +105,71 @@ uint32_t
 NrGnbNetDevice::GetCcMapSize() const
 {
     return static_cast<uint32_t>(m_ccMap.size());
+}
+
+
+void NrGnbNetDevice::stopSendingAndCancelSchedule() {
+    m_stopSendingMessages = true;
+}
+
+
+void
+NrGnbNetDevice::KpmSubscriptionCallback (E2AP_PDU_t* sub_req_pdu)
+{
+  NS_LOG_DEBUG ("\nReceived RIC Subscription Request, cellId= " << m_cellId << "\n");
+
+  E2Termination::RicSubscriptionRequest_rval_s params = m_e2term->ProcessRicSubscriptionRequest (sub_req_pdu);
+  NS_LOG_DEBUG ("requestorId " << +params.requestorId <<
+                 ", instanceId " << +params.instanceId <<
+                 ", ranFuncionId " << +params.ranFuncionId <<
+                 ", actionId " << +params.actionId);
+
+  if (!m_stopSendingMessages && !m_isReportingEnabled && !m_forceE2FileLogging)
+  {
+    //BuildAndSendReportMessage (params);
+    m_isReportingEnabled = true;
+  }
+
+}
+
+
+void
+    NrGnbNetDevice::ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu) {
+        NS_LOG_DEBUG("\n\nLteEnbNetDevice::ControlMessageReceivedCallback: Received RIC Control Message");
+
+        // Create RIC Control ACK
+        Ptr <RicControlMessage> controlMessage = Create<RicControlMessage>(sub_req_pdu);
+        NS_LOG_INFO("After RicControlMessage::RicControlMessage constructor");
+        NS_LOG_INFO("Request type " << controlMessage->m_requestType);
+        
+    }
+void
+NrGnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
+{
+  m_e2term = e2term;
+
+  NS_LOG_DEBUG("Register E2SM NR");
+
+  if (!m_forceE2FileLogging) {
+       long m_e2_func_id = long (e2_func_id);
+       long m_rc_e2_func_id = long(rc_e2_func_id);
+      Ptr<KpmFunctionDescription> kpmFd = Create<KpmFunctionDescription> ();
+      e2term->RegisterKpmCallbackToE2Sm (
+              m_e2_func_id, kpmFd,std::bind (&NrGnbNetDevice::KpmSubscriptionCallback, this, std::placeholders::_1));
+
+      Ptr <RicControlFunctionDescription> ricCtrlFd = Create<RicControlFunctionDescription>();
+      e2term->RegisterSmCallbackToE2Sm(m_rc_e2_func_id, ricCtrlFd,
+                                      std::bind(&NrGnbNetDevice::ControlMessageReceivedCallback,
+                                                this, std::placeholders::_1));
+
+      e2term->RegisterCallbackFunctionToE2Sm(1, std::bind(&NrGnbNetDevice::stopSendingAndCancelSchedule, this));
+    }
+}
+
+Ptr<E2Termination>
+NrGnbNetDevice::GetE2Termination() const
+{
+  return m_e2term;
 }
 
 void
@@ -256,8 +347,17 @@ NrGnbNetDevice::UpdateConfig()
         Ptr<BandwidthPartGnb> c = i.second;
         ccPhyConfMap.insert(std::pair<uint8_t, Ptr<BandwidthPartGnb>>(i.first, c));
     }
-
+   
     m_rrc->ConfigureCell(ccPhyConfMap);
+    if (m_e2term)
+            {
+              NS_LOG_DEBUG ("E2sim start in cell " << m_cellId << " force CSV logging "
+                                                   << m_forceE2FileLogging);
+              //
+              if(!m_forceE2FileLogging) {
+                  Simulator::Schedule (MicroSeconds (0), &E2Termination::Start, m_e2term);
+                }
+            }
 }
 
 uint16_t

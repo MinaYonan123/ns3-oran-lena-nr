@@ -461,6 +461,7 @@ build_lib(
     ${libapplications}
     ${libcsma}
     ${libconfig-store}
+    ${liboran-interface}
   TEST_SOURCES ${test_sources}
 )
 

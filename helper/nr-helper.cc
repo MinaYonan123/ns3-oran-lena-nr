@@ -129,7 +129,32 @@ NrHelper::GetTypeId()
                           StringValue("ns3::NrNoOpHandoverAlgorithm"),
                           MakeStringAccessor(&NrHelper::SetHandoverAlgorithmType,
                                              &NrHelper::GetHandoverAlgorithmType),
-                          MakeStringChecker());
+                          MakeStringChecker())
+            .AddAttribute ("E2ModeNr",
+                            "If true, enable reporting over E2 for NR cells.",
+                            BooleanValue (false),
+                            MakeBooleanAccessor (&NrHelper::m_e2mode_nr),
+                            MakeBooleanChecker ())
+            .AddAttribute ("E2ModeLte",
+                            "If true, enable reporting over E2 for LTE cells.",
+                            BooleanValue (true),
+                            MakeBooleanAccessor (&NrHelper::m_e2mode_lte),
+                            MakeBooleanChecker ())              
+            .AddAttribute ("E2TermIp",
+                           "The IP address of the RIC E2 termination",
+                            StringValue ("10.244.0.240"),
+                            MakeStringAccessor (&NrHelper::m_e2ip),
+                            MakeStringChecker ())
+            .AddAttribute ("E2Port",
+                            "Port number for E2",
+                            UintegerValue (36421),
+                            MakeUintegerAccessor (&NrHelper::m_e2port),
+                            MakeUintegerChecker<uint16_t> ())
+            .AddAttribute ("E2LocalPort",
+                            "The first port number for the local bind",
+                            UintegerValue (38470),
+                            MakeUintegerAccessor (&NrHelper::m_e2localPort),
+                            MakeUintegerChecker<uint16_t> ());
     return tid;
 }
 
@@ -1039,6 +1064,18 @@ NrHelper::InstallSingleGnbDevice(
     // carrier manager.
     rrc->SetNrMacSapProvider(ccmGnbManager->GetNrMacSapProvider());
     rrc->SetForwardUpCallback(MakeCallback(&NrGnbNetDevice::Receive, dev));
+    if(m_e2mode_nr) {
+    const uint16_t local_port = m_e2localPort + (uint16_t) cellId;
+    const std::string gnb_id{std::to_string (cellId)};
+    
+    std::string plmnId = "111";
+
+    NS_LOG_INFO ("cell_id " << gnb_id);
+    Ptr<E2Termination> e2term =
+        CreateObject<E2Termination> (m_e2ip, m_e2port, local_port, gnb_id, plmnId);
+
+    dev->SetAttribute("E2Termination", PointerValue(e2term));
+    }
 
     for (auto& it : ccMap)
     {

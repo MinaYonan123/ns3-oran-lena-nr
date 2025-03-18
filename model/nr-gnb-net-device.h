@@ -9,7 +9,7 @@
 #include "nr-net-device.h"
 
 #include "ns3/traced-callback.h"
-
+#include <ns3/oran-interface.h>
 namespace ns3
 {
 
@@ -141,7 +141,13 @@ class NrGnbNetDevice : public NrNetDevice
      * \return uplink earfcn
      */
     uint32_t GetCellIdUlEarfcn(uint16_t cellId) const;
-
+    void SetE2Termination(Ptr<E2Termination> e2term);
+    Ptr<E2Termination> GetE2Termination() const;
+    void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu);
+    void ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu);
+    void stopSendingAndCancelSchedule();
+    bool m_forceE2FileLogging;
+    
   protected:
     void DoInitialize() override;
 
@@ -158,6 +164,11 @@ class NrGnbNetDevice : public NrNetDevice
     Ptr<NrGnbComponentCarrierManager>
         m_componentCarrierManager; ///< the component carrier manager of this gNB
     Ptr<NrFhControl> m_nrFhControl;
+    Ptr<E2Termination> m_e2term;
+    double  rc_e2_func_id ; // to RC
+    double e2_func_id; //to pass kpm function id
+    bool m_stopSendingMessages;
+    bool m_isReportingEnabled;
 };
 
 } // namespace ns3
