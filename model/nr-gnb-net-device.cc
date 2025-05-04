@@ -75,9 +75,9 @@ NrGnbNetDevice::GetTypeId()
 }
 
 NrGnbNetDevice::NrGnbNetDevice()
-    : m_cellId(0),m_stopSendingMessages(false),
-         m_isReportingEnabled (false),
-     m_forceE2FileLogging (false)
+    : m_forceE2FileLogging (false),m_cellId(0),
+     m_stopSendingMessages(false),
+     m_isReportingEnabled (false)
 {    
     NS_LOG_FUNCTION(this);
 }
