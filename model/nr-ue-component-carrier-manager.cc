@@ -87,7 +87,7 @@ void
 NrUeComponentCarrierManager::SetNumberOfComponentCarriers(uint8_t noOfComponentCarriers)
 {
     NS_LOG_FUNCTION(this);
-    NS_ABORT_MSG_IF(noOfComponentCarriers < nr::MIN_NO_CC || noOfComponentCarriers > nr::MAX_NO_CC,
+    NS_ABORT_MSG_IF(noOfComponentCarriers < nr::MIN_NO_CC_nr || noOfComponentCarriers > nr::MAX_NO_CC_nr,
                     "Number of component carriers should be greater than 0 and less than 6");
     m_noOfComponentCarriers = noOfComponentCarriers;
     // Set the number of component carriers in UE RRC

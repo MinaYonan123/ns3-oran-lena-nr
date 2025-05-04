@@ -1982,7 +1982,7 @@ NrGnbRrc::GetTypeId()
                           "Number of Component Carriers",
                           UintegerValue(1),
                           MakeIntegerAccessor(&NrGnbRrc::m_numberOfComponentCarriers),
-                          MakeIntegerChecker<int16_t>(nr::MIN_NO_CC, nr::MAX_NO_CC))
+                          MakeIntegerChecker<int16_t>(nr::MIN_NO_CC_nr, nr::MAX_NO_CC_nr))
 
             // Handover related attributes
             .AddAttribute("AdmitHandoverRequest",

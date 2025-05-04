@@ -124,7 +124,7 @@ NrUeRrc::NrUeRrc()
       m_previousCellId(0),
       m_connEstFailCountLimit(0),
       m_connEstFailCount(0),
-      m_numberOfComponentCarriers(nr::MIN_NO_CC)
+      m_numberOfComponentCarriers(nr::MIN_NO_CC_nr)
 {
     NS_LOG_FUNCTION(this);
     m_cphySapUser.push_back(new MemberNrUeCphySapUser<NrUeRrc>(this));
@@ -574,15 +574,15 @@ NrUeRrc::DoInitialize()
 void
 NrUeRrc::InitializeSap()
 {
-    if (m_numberOfComponentCarriers < nr::MIN_NO_CC || m_numberOfComponentCarriers > nr::MAX_NO_CC)
+    if (m_numberOfComponentCarriers < nr::MIN_NO_CC_nr || m_numberOfComponentCarriers > nr::MAX_NO_CC_nr)
     {
         // this check is needed in order to maintain backward compatibility with scripts and tests
         // if case lte-helper is not used (like in several tests) the m_numberOfComponentCarriers
         // is not set and then an error is raised
         // In this case m_numberOfComponentCarriers is set to 1
-        m_numberOfComponentCarriers = nr::MIN_NO_CC;
+        m_numberOfComponentCarriers = nr::MIN_NO_CC_nr;
     }
-    if (m_numberOfComponentCarriers > nr::MIN_NO_CC)
+    if (m_numberOfComponentCarriers > nr::MIN_NO_CC_nr)
     {
         for (uint16_t i = 1; i < m_numberOfComponentCarriers; i++)
         {
