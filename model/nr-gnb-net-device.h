@@ -10,19 +10,28 @@
 
 #include "ns3/traced-callback.h"
 #include <ns3/oran-interface.h>
-namespace ns3
-{
 
-class Packet;
-class PacketBurst;
-class Node;
-class NrGnbPhy;
-class NrGnbMac;
-class NrGnbRrc;
-class BandwidthPartGnb;
-class NrGnbComponentCarrierManager;
-class BwpManagerGnb;
-class NrMacScheduler;
+namespace ns3 {
+
+    class Packet;
+
+    class PacketBurst;
+
+    class Node;
+
+    class NrGnbPhy;
+
+    class NrGnbMac;
+
+    class NrGnbRrc;
+
+    class BandwidthPartGnb;
+
+    class NrGnbComponentCarrierManager;
+
+    class BwpManagerGnb;
+
+    class NrMacScheduler;
 
 /**
  * \ingroup gnb
@@ -30,146 +39,165 @@ class NrMacScheduler;
  *
  * This class represent the GNB NetDevice.
  */
-class NrGnbNetDevice : public NrNetDevice
-{
-  public:
-    static TypeId GetTypeId();
+    class NrGnbNetDevice : public NrNetDevice {
+    public:
+        static TypeId GetTypeId();
 
-    NrGnbNetDevice();
+        NrGnbNetDevice();
 
-    ~NrGnbNetDevice() override;
+        ~NrGnbNetDevice() override;
 
-    Ptr<NrMacScheduler> GetScheduler(uint8_t index) const;
+        Ptr<NrMacScheduler> GetScheduler(uint8_t index) const;
 
-    Ptr<NrGnbMac> GetMac(uint8_t index) const;
+        Ptr<NrGnbMac> GetMac(uint8_t index) const;
 
-    Ptr<NrGnbPhy> GetPhy(uint8_t index) const;
+        Ptr<NrGnbPhy> GetPhy(uint8_t index) const;
 
-    Ptr<BwpManagerGnb> GetBwpManager() const;
+        Ptr<BwpManagerGnb> GetBwpManager() const;
 
-    uint16_t GetBwpId(uint8_t index) const;
+        uint16_t GetBwpId(uint8_t index) const;
 
-    /**
-     * \return the cell id
-     */
-    uint16_t GetCellId() const;
+        /**
+         * \return the cell id
+         */
+        uint16_t GetCellId() const;
 
-    /**
-     * \return the cell ids belonging to this gNB
-     */
-    std::vector<uint16_t> GetCellIds() const;
+        /**
+         * \return the cell ids belonging to this gNB
+         */
+        std::vector<uint16_t> GetCellIds() const;
 
-    /**
-     * \brief Set this gnb cell id
-     * \param cellId the cell id
-     */
-    void SetCellId(uint16_t cellId);
+        /**
+         * \brief Set this gnb cell id
+         * \param cellId the cell id
+         */
+        void SetCellId(uint16_t cellId);
 
-    uint16_t GetEarfcn(uint8_t index) const;
+        uint16_t GetEarfcn(uint8_t index) const;
 
-    void SetRrc(Ptr<NrGnbRrc> rrc);
+        void SetRrc(Ptr<NrGnbRrc> rrc);
 
-    Ptr<NrGnbRrc> GetRrc();
+        Ptr<NrGnbRrc> GetRrc();
 
-    void SetCcMap(const std::map<uint8_t, Ptr<BandwidthPartGnb>>& ccm);
+        void SetCcMap(const std::map<uint8_t, Ptr<BandwidthPartGnb>> &ccm);
 
-    /**
-     * \brief Get the size of the component carriers map
-     * \return the number of cc that we have
-     */
-    uint32_t GetCcMapSize() const;
+        /**
+         * \brief Get the size of the component carriers map
+         * \return the number of cc that we have
+         */
+        uint32_t GetCcMapSize() const;
 
-    /**
-     * \brief Set the NrFhControl for this cell
-     * \param nrFh The ptr to the NrFhControl
-     */
-    void SetNrFhControl(Ptr<NrFhControl> nrFh);
+        /**
+         * \brief Set the NrFhControl for this cell
+         * \param nrFh The ptr to the NrFhControl
+         */
+        void SetNrFhControl(Ptr<NrFhControl> nrFh);
 
-    /**
-     * \brief Get the NrFhControl for this cell
-     * \return the ptr to NrFhControl
-     */
-    Ptr<NrFhControl> GetNrFhControl();
+        /**
+         * \brief Get the NrFhControl for this cell
+         * \return the ptr to NrFhControl
+         */
+        Ptr<NrFhControl> GetNrFhControl();
 
-    /**
-     * \brief The gNB received a CTRL message list.
-     *
-     * The gNB should divide the messages to the BWP they pertain to.
-     *
-     * \param msgList Message list
-     * \param sourceBwpId BWP Id from which the list originated
-     */
-    void RouteIngoingCtrlMsgs(const std::list<Ptr<NrControlMessage>>& msgList, uint8_t sourceBwpId);
+        /**
+         * \brief The gNB received a CTRL message list.
+         *
+         * The gNB should divide the messages to the BWP they pertain to.
+         *
+         * \param msgList Message list
+         * \param sourceBwpId BWP Id from which the list originated
+         */
+        void RouteIngoingCtrlMsgs(const std::list<Ptr<NrControlMessage>> &msgList, uint8_t sourceBwpId);
 
-    /**
-     * \brief Route the outgoing messages to the right BWP
-     * \param msgList the list of messages
-     * \param sourceBwpId the source bwp of the messages
-     */
-    void RouteOutgoingCtrlMsgs(const std::list<Ptr<NrControlMessage>>& msgList,
-                               uint8_t sourceBwpId);
+        /**
+         * \brief Route the outgoing messages to the right BWP
+         * \param msgList the list of messages
+         * \param sourceBwpId the source bwp of the messages
+         */
+        void RouteOutgoingCtrlMsgs(const std::list<Ptr<NrControlMessage>> &msgList,
+                                   uint8_t sourceBwpId);
 
-    /**
-     * \brief Update the RRC config. Must be called only once.
-     */
-    void UpdateConfig();
+        /**
+         * \brief Update the RRC config. Must be called only once.
+         */
+        void UpdateConfig();
 
-    /**
-     * \brief Get downlink bandwidth for a given physical cell Id
-     * \param cellId Physical cell Id
-     * \return number of RBs
-     */
-    uint16_t GetCellIdDlBandwidth(uint16_t cellId) const;
+        /**
+         * \brief Get downlink bandwidth for a given physical cell Id
+         * \param cellId Physical cell Id
+         * \return number of RBs
+         */
+        uint16_t GetCellIdDlBandwidth(uint16_t cellId) const;
 
-    /**
-     * \brief Get uplink bandwidth for a given physical cell Id
-     * \param cellId Physical cell Id
-     * \return number of RBs
-     */
-    uint16_t GetCellIdUlBandwidth(uint16_t cellId) const;
+        /**
+         * \brief Get uplink bandwidth for a given physical cell Id
+         * \param cellId Physical cell Id
+         * \return number of RBs
+         */
+        uint16_t GetCellIdUlBandwidth(uint16_t cellId) const;
 
-    /**
-     * \brief Get uplink earfcn for a given physical cell Id
-     * \param cellId Physical cell Id
-     * \return downlink earfcn
-     */
-    uint32_t GetCellIdDlEarfcn(uint16_t cellId) const;
+        /**
+         * \brief Get uplink earfcn for a given physical cell Id
+         * \param cellId Physical cell Id
+         * \return downlink earfcn
+         */
+        uint32_t GetCellIdDlEarfcn(uint16_t cellId) const;
 
-    /**
-     * \brief Get uplink earfcn for a given physical cell Id
-     * \param cellId Physical cell Id
-     * \return uplink earfcn
-     */
-    uint32_t GetCellIdUlEarfcn(uint16_t cellId) const;
-    void SetE2Termination(Ptr<E2Termination> e2term);
-    Ptr<E2Termination> GetE2Termination() const;
-    void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu);
-    void ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu);
-    void stopSendingAndCancelSchedule();
-    bool m_forceE2FileLogging;
-    
-  protected:
-    void DoInitialize() override;
+        /**
+         * \brief Get uplink earfcn for a given physical cell Id
+         * \param cellId Physical cell Id
+         * \return uplink earfcn
+         */
+        uint32_t GetCellIdUlEarfcn(uint16_t cellId) const;
 
-    void DoDispose() override;
-    bool DoSend(Ptr<Packet> packet, const Address& dest, uint16_t protocolNumber) override;
+        void SetE2Termination(Ptr<E2Termination> e2term);
 
-  private:
-    Ptr<NrGnbRrc> m_rrc;
+        Ptr<E2Termination> GetE2Termination() const;
 
-    uint16_t m_cellId; //!< Cell ID. Set by the helper.
+        void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu);
 
-    std::map<uint8_t, Ptr<BandwidthPartGnb>> m_ccMap; /**< NrComponentCarrier map */
+        void ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu);
 
-    Ptr<NrGnbComponentCarrierManager>
-        m_componentCarrierManager; ///< the component carrier manager of this gNB
-    Ptr<NrFhControl> m_nrFhControl;
-    Ptr<E2Termination> m_e2term;
-    double  rc_e2_func_id ; // to RC
-    double e2_func_id; //to pass kpm function id
-    bool m_stopSendingMessages;
-    bool m_isReportingEnabled;
-};
+        void stopSendingAndCancelSchedule();
+
+        bool m_forceE2FileLogging;
+
+        void RBStatsTraceCallback(const ns3::SfnSf &sfnSf, uint8_t symbol,
+                                  const std::vector<int> &rbMap, uint16_t bwpId,
+                                  uint16_t cellId);
+        struct CellStats {
+            uint16_t cellId = 0;         // Cell ID
+            double prbUsagePercentage = 0; // PRB usage percentage
+            double averageLastRb= 0;    // Store the average value of the last RBG
+        };
+
+    void KPI_tracker();
+
+    protected:
+        void DoInitialize() override;
+
+        void DoDispose() override;
+
+        bool DoSend(Ptr<Packet> packet, const Address &dest, uint16_t protocolNumber) override;
+
+    private:
+        Ptr<NrGnbRrc> m_rrc;
+
+        uint16_t m_cellId; //!< Cell ID. Set by the helper.
+
+        std::map<uint8_t, Ptr<BandwidthPartGnb>> m_ccMap; /**< NrComponentCarrier map */
+
+        Ptr<NrGnbComponentCarrierManager>
+                m_componentCarrierManager; ///< the component carrier manager of this gNB
+        Ptr<NrFhControl> m_nrFhControl;
+        Ptr<E2Termination> m_e2term;
+        double rc_e2_func_id; // to RC
+        double e2_func_id; //to pass kpm function id
+        bool m_stopSendingMessages;
+        bool m_isReportingEnabled;
+
+
+    };
 
 } // namespace ns3
 
