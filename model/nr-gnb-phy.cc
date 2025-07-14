@@ -34,159 +34,165 @@
 #include <unordered_set>
 #include <vector>
 
-namespace ns3 {
+namespace ns3
+{
 
-    NS_LOG_COMPONENT_DEFINE("NrGnbPhy");
+NS_LOG_COMPONENT_DEFINE("NrGnbPhy");
 
-    NS_OBJECT_ENSURE_REGISTERED(NrGnbPhy);
+NS_OBJECT_ENSURE_REGISTERED(NrGnbPhy);
 
-    NrGnbPhy::NrGnbPhy()
-            : m_n0Delay(0),
-              m_n1Delay(4) {
-        NS_LOG_FUNCTION(this);
-        m_gnbCphySapProvider = new MemberNrGnbCphySapProvider<NrGnbPhy>(this);
-        m_nrFhPhySapUser = new MemberNrFhPhySapUser<NrGnbPhy>(this);
-    }
+NrGnbPhy::NrGnbPhy()
+    : m_n0Delay(0),
+      m_n1Delay(4)
+{
+    NS_LOG_FUNCTION(this);
+    m_gnbCphySapProvider = new MemberNrGnbCphySapProvider<NrGnbPhy>(this);
+    m_nrFhPhySapUser = new MemberNrFhPhySapUser<NrGnbPhy>(this);
+}
 
-    NrGnbPhy::~NrGnbPhy() {
-    }
+NrGnbPhy::~NrGnbPhy()
+{
+}
 
-    void
-    NrGnbPhy::DoDispose() {
-        NS_LOG_FUNCTION(this);
-        delete m_gnbCphySapProvider;
-        delete m_nrFhPhySapUser;
-        m_nrFhPhySapUser = nullptr;
-        m_nrFhPhySapProvider = nullptr;
-        NrPhy::DoDispose();
-    }
+void
+NrGnbPhy::DoDispose()
+{
+    NS_LOG_FUNCTION(this);
+    delete m_gnbCphySapProvider;
+    delete m_nrFhPhySapUser;
+    m_nrFhPhySapUser = nullptr;
+    m_nrFhPhySapProvider = nullptr;
+    NrPhy::DoDispose();
+}
 
-    TypeId
-    NrGnbPhy::GetTypeId() {
-        static TypeId tid =
-                TypeId("ns3::NrGnbPhy")
-                        .SetParent<NrPhy>()
-                        .AddConstructor<NrGnbPhy>()
-                        .AddAttribute("RbOverhead",
-                                      "Overhead when calculating the usable RB number",
-                                      DoubleValue(0.04),
-                                      MakeDoubleAccessor(&NrGnbPhy::SetRbOverhead, &NrGnbPhy::GetRbOverhead),
-                                      MakeDoubleChecker<double>(0, 0.5))
-                        .AddAttribute("TxPower",
-                                      "Transmission power in dBm",
-                                      DoubleValue(4.0),
-                                      MakeDoubleAccessor(&NrGnbPhy::SetTxPower, &NrGnbPhy::GetTxPower),
-                                      MakeDoubleChecker<double>())
-                        .AddAttribute(
-                                "NoiseFigure",
-                                "Loss (dB) in the Signal-to-Noise-Ratio due to non-idealities in the receiver."
-                                " According to Wikipedia (http://en.wikipedia.org/wiki/Noise_figure), this is "
-                                "\"the difference in decibels (dB) between"
-                                " the noise output of the actual receiver to the noise output of an "
-                                " ideal receiver with the same overall gain and bandwidth when the receivers "
-                                " are connected to sources at the standard noise temperature T0.\" "
-                                "In this model, we consider T0 = 290K.",
-                                DoubleValue(5.0),
-                                MakeDoubleAccessor(&NrPhy::SetNoiseFigure, &NrPhy::GetNoiseFigure),
-                                MakeDoubleChecker<double>())
-                        .AddAttribute(
-                                "PowerAllocationType",
-                                "Defines the type of the power allocation. Currently are supported "
-                                "two types: \"UniformPowerAllocBw\", which is a uniform power allocation over all "
-                                "bandwidth (over all RBs), and \"UniformPowerAllocUsed\", which is a uniform "
-                                "power allocation over used (active) RBs. By default is set a uniform power "
-                                "allocation over used RBs .",
-                                EnumValue(NrSpectrumValueHelper::UNIFORM_POWER_ALLOCATION_USED),
-                                MakeEnumAccessor<NrSpectrumValueHelper::PowerAllocationType>(
-                                        &NrPhy::SetPowerAllocationType,
-                                        &NrPhy::GetPowerAllocationType),
-                                MakeEnumChecker(NrSpectrumValueHelper::UNIFORM_POWER_ALLOCATION_BW,
-                                                "UniformPowerAllocBw",
-                                                NrSpectrumValueHelper::UNIFORM_POWER_ALLOCATION_USED,
-                                                "UniformPowerAllocUsed"))
-                        .AddAttribute("SpectrumPhy",
-                                      "The downlink NrSpectrumPhy associated to this NrPhy",
-                                      TypeId::ATTR_GET,
-                                      PointerValue(),
-                                      MakePointerAccessor(&NrPhy::GetSpectrumPhy),
-                                      MakePointerChecker<NrSpectrumPhy>())
-                        .AddTraceSource("UlSinrTrace",
-                                        "UL SINR statistics.",
-                                        MakeTraceSourceAccessor(&NrGnbPhy::m_ulSinrTrace),
-                                        "ns3::UlSinr::TracedCallback")
-                        .AddTraceSource("GnbPhyRxedCtrlMsgsTrace",
-                                        "Gnb PHY Rxed Control Messages Traces.",
-                                        MakeTraceSourceAccessor(&NrGnbPhy::m_phyRxedCtrlMsgsTrace),
-                                        "ns3::NrPhyRxTrace::RxedGnbPhyCtrlMsgsTracedCallback")
-                        .AddTraceSource("GnbPhyTxedCtrlMsgsTrace",
-                                        "Gnb PHY Txed Control Messages Traces.",
-                                        MakeTraceSourceAccessor(&NrGnbPhy::m_phyTxedCtrlMsgsTrace),
-                                        "ns3::NrPhyRxTrace::TxedGnbPhyCtrlMsgsTracedCallback")
-                        .AddAttribute("N0Delay",
-                                      "Minimum processing delay needed to decode DL DCI and decode DL data",
-                                      UintegerValue(0),
-                                      MakeUintegerAccessor(&NrGnbPhy::SetN0Delay, &NrGnbPhy::GetN0Delay),
-                                      MakeUintegerChecker<uint32_t>(0, 1))
-                        .AddAttribute("N1Delay",
-                                      "Minimum processing delay (UE side) from the end of DL Data reception to "
-                                      "the earliest possible start of the corresponding ACK/NACK transmission",
-                                      UintegerValue(2),
-                                      MakeUintegerAccessor(&NrGnbPhy::SetN1Delay, &NrGnbPhy::GetN1Delay),
-                                      MakeUintegerChecker<uint32_t>(0, 4))
-                        .AddAttribute("N2Delay",
-                                      "Minimum processing delay needed to decode UL DCI and prepare UL data",
-                                      UintegerValue(2),
-                                      MakeUintegerAccessor(&NrGnbPhy::SetN2Delay, &NrGnbPhy::GetN2Delay),
-                                      MakeUintegerChecker<uint32_t>(0, 4))
-                        .AddAttribute("TbDecodeLatency",
-                                      "Transport block decode latency",
-                                      TimeValue(MicroSeconds(100)),
-                                      MakeTimeAccessor(&NrPhy::SetTbDecodeLatency, &NrPhy::GetTbDecodeLatency),
-                                      MakeTimeChecker())
-                        .AddAttribute("Numerology",
-                                      "The 3GPP numerology to be used",
-                                      UintegerValue(0),
-                                      MakeUintegerAccessor(&NrPhy::SetNumerology, &NrPhy::GetNumerology),
-                                      MakeUintegerChecker<uint16_t>())
-                        .AddAttribute(
-                                "SymbolsPerSlot",
-                                "Number of symbols in one slot",
-                                UintegerValue(14),
-                                MakeUintegerAccessor(&NrPhy::SetSymbolsPerSlot, &NrPhy::GetSymbolsPerSlot),
-                                MakeUintegerChecker<uint16_t>())
-                        .AddAttribute("Pattern",
-                                      "The slot pattern",
-                                      StringValue("F|F|F|F|F|F|F|F|F|F|"),
-                                      MakeStringAccessor(&NrGnbPhy::SetPattern, &NrGnbPhy::GetPattern),
-                                      MakeStringChecker())
-                        .AddTraceSource("SlotDataStats",
-                                        "Data statistics for the current slot: SfnSf, active UE, used RE, "
-                                        "used symbols, available RBs, available symbols, bwp ID, cell ID",
-                                        MakeTraceSourceAccessor(&NrGnbPhy::m_phySlotDataStats),
-                                        "ns3::NrGnbPhy::SlotStatsTracedCallback")
-                        .AddTraceSource("SlotCtrlStats",
-                                        "Ctrl statistics for the current slot: SfnSf, active UE, used RE, "
-                                        "used symbols, available RBs, available symbols, bwp ID, cell ID",
-                                        MakeTraceSourceAccessor(&NrGnbPhy::m_phySlotCtrlStats),
-                                        "ns3::NrGnbPhy::SlotStatsTracedCallback")
-                        .AddTraceSource(
-                                "RBDataStats",
-                                "Resource Block used for data: SfnSf, symbol, RB PHY map, bwp ID, cell ID",
-                                MakeTraceSourceAccessor(&NrGnbPhy::m_rbStatistics),
-                                "ns3::NrGnbPhy::RBStatsTracedCallback");
-        return tid;
-    }
+TypeId
+NrGnbPhy::GetTypeId()
+{
+    static TypeId tid =
+        TypeId("ns3::NrGnbPhy")
+            .SetParent<NrPhy>()
+            .AddConstructor<NrGnbPhy>()
+            .AddAttribute("RbOverhead",
+                          "Overhead when calculating the usable RB number",
+                          DoubleValue(0.04),
+                          MakeDoubleAccessor(&NrGnbPhy::SetRbOverhead, &NrGnbPhy::GetRbOverhead),
+                          MakeDoubleChecker<double>(0, 0.5))
+            .AddAttribute("TxPower",
+                          "Transmission power in dBm",
+                          DoubleValue(4.0),
+                          MakeDoubleAccessor(&NrGnbPhy::SetTxPower, &NrGnbPhy::GetTxPower),
+                          MakeDoubleChecker<double>())
+            .AddAttribute(
+                "NoiseFigure",
+                "Loss (dB) in the Signal-to-Noise-Ratio due to non-idealities in the receiver."
+                " According to Wikipedia (http://en.wikipedia.org/wiki/Noise_figure), this is "
+                "\"the difference in decibels (dB) between"
+                " the noise output of the actual receiver to the noise output of an "
+                " ideal receiver with the same overall gain and bandwidth when the receivers "
+                " are connected to sources at the standard noise temperature T0.\" "
+                "In this model, we consider T0 = 290K.",
+                DoubleValue(5.0),
+                MakeDoubleAccessor(&NrPhy::SetNoiseFigure, &NrPhy::GetNoiseFigure),
+                MakeDoubleChecker<double>())
+            .AddAttribute(
+                "PowerAllocationType",
+                "Defines the type of the power allocation. Currently are supported "
+                "two types: \"UniformPowerAllocBw\", which is a uniform power allocation over all "
+                "bandwidth (over all RBs), and \"UniformPowerAllocUsed\", which is a uniform "
+                "power allocation over used (active) RBs. By default is set a uniform power "
+                "allocation over used RBs .",
+                EnumValue(NrSpectrumValueHelper::UNIFORM_POWER_ALLOCATION_USED),
+                MakeEnumAccessor<NrSpectrumValueHelper::PowerAllocationType>(
+                    &NrPhy::SetPowerAllocationType,
+                    &NrPhy::GetPowerAllocationType),
+                MakeEnumChecker(NrSpectrumValueHelper::UNIFORM_POWER_ALLOCATION_BW,
+                                "UniformPowerAllocBw",
+                                NrSpectrumValueHelper::UNIFORM_POWER_ALLOCATION_USED,
+                                "UniformPowerAllocUsed"))
+            .AddAttribute("SpectrumPhy",
+                          "The downlink NrSpectrumPhy associated to this NrPhy",
+                          TypeId::ATTR_GET,
+                          PointerValue(),
+                          MakePointerAccessor(&NrPhy::GetSpectrumPhy),
+                          MakePointerChecker<NrSpectrumPhy>())
+            .AddTraceSource("UlSinrTrace",
+                            "UL SINR statistics.",
+                            MakeTraceSourceAccessor(&NrGnbPhy::m_ulSinrTrace),
+                            "ns3::UlSinr::TracedCallback")
+            .AddTraceSource("GnbPhyRxedCtrlMsgsTrace",
+                            "Gnb PHY Rxed Control Messages Traces.",
+                            MakeTraceSourceAccessor(&NrGnbPhy::m_phyRxedCtrlMsgsTrace),
+                            "ns3::NrPhyRxTrace::RxedGnbPhyCtrlMsgsTracedCallback")
+            .AddTraceSource("GnbPhyTxedCtrlMsgsTrace",
+                            "Gnb PHY Txed Control Messages Traces.",
+                            MakeTraceSourceAccessor(&NrGnbPhy::m_phyTxedCtrlMsgsTrace),
+                            "ns3::NrPhyRxTrace::TxedGnbPhyCtrlMsgsTracedCallback")
+            .AddAttribute("N0Delay",
+                          "Minimum processing delay needed to decode DL DCI and decode DL data",
+                          UintegerValue(0),
+                          MakeUintegerAccessor(&NrGnbPhy::SetN0Delay, &NrGnbPhy::GetN0Delay),
+                          MakeUintegerChecker<uint32_t>(0, 1))
+            .AddAttribute("N1Delay",
+                          "Minimum processing delay (UE side) from the end of DL Data reception to "
+                          "the earliest possible start of the corresponding ACK/NACK transmission",
+                          UintegerValue(2),
+                          MakeUintegerAccessor(&NrGnbPhy::SetN1Delay, &NrGnbPhy::GetN1Delay),
+                          MakeUintegerChecker<uint32_t>(0, 4))
+            .AddAttribute("N2Delay",
+                          "Minimum processing delay needed to decode UL DCI and prepare UL data",
+                          UintegerValue(2),
+                          MakeUintegerAccessor(&NrGnbPhy::SetN2Delay, &NrGnbPhy::GetN2Delay),
+                          MakeUintegerChecker<uint32_t>(0, 4))
+            .AddAttribute("TbDecodeLatency",
+                          "Transport block decode latency",
+                          TimeValue(MicroSeconds(100)),
+                          MakeTimeAccessor(&NrPhy::SetTbDecodeLatency, &NrPhy::GetTbDecodeLatency),
+                          MakeTimeChecker())
+            .AddAttribute("Numerology",
+                          "The 3GPP numerology to be used",
+                          UintegerValue(0),
+                          MakeUintegerAccessor(&NrPhy::SetNumerology, &NrPhy::GetNumerology),
+                          MakeUintegerChecker<uint16_t>())
+            .AddAttribute(
+                "SymbolsPerSlot",
+                "Number of symbols in one slot",
+                UintegerValue(14),
+                MakeUintegerAccessor(&NrPhy::SetSymbolsPerSlot, &NrPhy::GetSymbolsPerSlot),
+                MakeUintegerChecker<uint16_t>())
+            .AddAttribute("Pattern",
+                          "The slot pattern",
+                          StringValue("F|F|F|F|F|F|F|F|F|F|"),
+                          MakeStringAccessor(&NrGnbPhy::SetPattern, &NrGnbPhy::GetPattern),
+                          MakeStringChecker())
+            .AddTraceSource("SlotDataStats",
+                            "Data statistics for the current slot: SfnSf, active UE, used RE, "
+                            "used symbols, available RBs, available symbols, bwp ID, cell ID",
+                            MakeTraceSourceAccessor(&NrGnbPhy::m_phySlotDataStats),
+                            "ns3::NrGnbPhy::SlotStatsTracedCallback")
+            .AddTraceSource("SlotCtrlStats",
+                            "Ctrl statistics for the current slot: SfnSf, active UE, used RE, "
+                            "used symbols, available RBs, available symbols, bwp ID, cell ID",
+                            MakeTraceSourceAccessor(&NrGnbPhy::m_phySlotCtrlStats),
+                            "ns3::NrGnbPhy::SlotStatsTracedCallback")
+            .AddTraceSource(
+                "RBDataStats",
+                "Resource Block used for data: SfnSf, symbol, RB PHY map, bwp ID, cell ID",
+                MakeTraceSourceAccessor(&NrGnbPhy::m_rbStatistics),
+                "ns3::NrGnbPhy::RBStatsTracedCallback");
+    return tid;
+}
 
+uint32_t
+NrGnbPhy::GetNumRbPerRbg() const
+{
+    return m_phySapUser->GetNumRbPerRbg();
+}
 
-    uint32_t
-    NrGnbPhy::GetNumRbPerRbg() const {
-        return m_phySapUser->GetNumRbPerRbg();
-    }
-
-    const SfnSf &
-    NrGnbPhy::GetCurrentSfnSf() const {
-        return m_currentSlot;
-    }
+const SfnSf&
+NrGnbPhy::GetCurrentSfnSf() const
+{
+    return m_currentSlot;
+}
 
 /**
  * \brief An intelligent way to calculate the modulo
@@ -194,17 +200,22 @@ namespace ns3 {
  * \param m Modulo
  * \return n+=m until n < 0
  */
-    static uint32_t
-    modulo(int n, uint32_t m) {
-        if (n >= 0) {
-            return static_cast<uint32_t>(n) % m;
-        } else {
-            while (n < 0) {
-                n += m;
-            }
-            return static_cast<uint32_t>(n);
-        }
+static uint32_t
+modulo(int n, uint32_t m)
+{
+    if (n >= 0)
+    {
+        return static_cast<uint32_t>(n) % m;
     }
+    else
+    {
+        while (n < 0)
+        {
+            n += m;
+        }
+        return static_cast<uint32_t>(n);
+    }
+}
 
 /**
  * \brief Return the slot in which the DL HARQ Feedback should be sent, according to the parameter
@@ -219,25 +230,28 @@ namespace ns3 {
  * HARQ feedbacks among all UL subframes in an equal (as much as possible) manner.
  * This tactic is omitted in this implementation.
  */
-    static int32_t
-    ReturnHarqSlot(const std::vector<LteNrTddSlotType> &pattern, uint32_t pos, uint32_t n1) {
-        int32_t k1 = static_cast<int32_t>(n1);
+static int32_t
+ReturnHarqSlot(const std::vector<LteNrTddSlotType>& pattern, uint32_t pos, uint32_t n1)
+{
+    int32_t k1 = static_cast<int32_t>(n1);
 
-        uint32_t index = modulo(static_cast<int>(pos) + k1, static_cast<uint32_t>(pattern.size()));
+    uint32_t index = modulo(static_cast<int>(pos) + k1, static_cast<uint32_t>(pattern.size()));
 
-        while (pattern[index] < LteNrTddSlotType::S) {
-            k1++;
-            index = modulo(static_cast<int>(pos) + k1, static_cast<uint32_t>(pattern.size()));
-            NS_ASSERT(index < pattern.size());
-        }
-
-        return k1;
+    while (pattern[index] < LteNrTddSlotType::S)
+    {
+        k1++;
+        index = modulo(static_cast<int>(pos) + k1, static_cast<uint32_t>(pattern.size()));
+        NS_ASSERT(index < pattern.size());
     }
 
-    struct DciKPair {
-        uint32_t indexDci{0};
-        uint32_t k{0};
-    };
+    return k1;
+}
+
+struct DciKPair
+{
+    uint32_t indexDci{0};
+    uint32_t k{0};
+};
 
 /**
  * \brief Return the slot in which the DCI should be send, according to the parameter n,
@@ -247,22 +261,24 @@ namespace ns3 {
  * sent \param n The N parameter (equal to N0 or N2, depending if it is DL or UL) \return The slot
  * position in which the DCI for the position specified should be sent and the k0/k2
  */
-    static DciKPair
-    ReturnDciSlot(const std::vector<LteNrTddSlotType> &pattern, uint32_t pos, uint32_t n) {
-        DciKPair ret;
-        ret.k = n;
+static DciKPair
+ReturnDciSlot(const std::vector<LteNrTddSlotType>& pattern, uint32_t pos, uint32_t n)
+{
+    DciKPair ret;
+    ret.k = n;
+    ret.indexDci = modulo(static_cast<int>(pos) - static_cast<int>(ret.k),
+                          static_cast<uint32_t>(pattern.size()));
+
+    while (pattern[ret.indexDci] > LteNrTddSlotType::F)
+    {
+        ret.k++;
         ret.indexDci = modulo(static_cast<int>(pos) - static_cast<int>(ret.k),
                               static_cast<uint32_t>(pattern.size()));
-
-        while (pattern[ret.indexDci] > LteNrTddSlotType::F) {
-            ret.k++;
-            ret.indexDci = modulo(static_cast<int>(pos) - static_cast<int>(ret.k),
-                                  static_cast<uint32_t>(pattern.size()));
-            NS_ASSERT(ret.indexDci < pattern.size());
-        }
-
-        return ret;
+        NS_ASSERT(ret.indexDci < pattern.size());
     }
+
+    return ret;
+}
 
 /**
  * \brief Generates the map tosendDl/Ul that holds the information of the DCI Slot and the
@@ -274,278 +290,309 @@ namespace ns3 {
  * sent \param n The N parameter (equal to N0 or N2, depending if it is DL or UL) \param
  * l1l2CtrlLatency L1L2CtrlLatency of the system
  */
-    static void
-    GenerateDciMaps(const std::vector<LteNrTddSlotType> &pattern,
-                    std::map<uint32_t, std::vector<uint32_t>> *toSend,
-                    std::map<uint32_t, std::vector<uint32_t>> *generate,
-                    uint32_t pos,
-                    uint32_t n,
-                    uint32_t l1l2CtrlLatency) {
-        auto dciSlot = ReturnDciSlot(pattern, pos, n);
-        uint32_t indexGen =
-                modulo(static_cast<int>(dciSlot.indexDci) - static_cast<int>(l1l2CtrlLatency),
-                       static_cast<uint32_t>(pattern.size()));
-        uint32_t kWithCtrlLatency = static_cast<uint32_t>(dciSlot.k) + l1l2CtrlLatency;
+static void
+GenerateDciMaps(const std::vector<LteNrTddSlotType>& pattern,
+                std::map<uint32_t, std::vector<uint32_t>>* toSend,
+                std::map<uint32_t, std::vector<uint32_t>>* generate,
+                uint32_t pos,
+                uint32_t n,
+                uint32_t l1l2CtrlLatency)
+{
+    auto dciSlot = ReturnDciSlot(pattern, pos, n);
+    uint32_t indexGen =
+        modulo(static_cast<int>(dciSlot.indexDci) - static_cast<int>(l1l2CtrlLatency),
+               static_cast<uint32_t>(pattern.size()));
+    uint32_t kWithCtrlLatency = static_cast<uint32_t>(dciSlot.k) + l1l2CtrlLatency;
 
-        (*toSend)[dciSlot.indexDci].push_back(static_cast<uint32_t>(dciSlot.k));
-        (*generate)[indexGen].push_back(kWithCtrlLatency);
-    }
-
-    void
-    NrGnbPhy::GenerateStructuresFromPattern(const std::vector<LteNrTddSlotType> &pattern,
-                                            std::map<uint32_t, std::vector<uint32_t>> *toSendDl,
-                                            std::map<uint32_t, std::vector<uint32_t>> *toSendUl,
-                                            std::map<uint32_t, std::vector<uint32_t>> *generateDl,
-                                            std::map<uint32_t, std::vector<uint32_t>> *generateUl,
-                                            std::map<uint32_t, uint32_t> *dlHarqfbPosition,
-                                            uint32_t n0,
-                                            uint32_t n2,
-                                            uint32_t n1,
-                                            uint32_t l1l2CtrlLatency) {
-        const uint32_t n = static_cast<uint32_t>(pattern.size());
-
-        // Create a pattern that is all F.
-        std::vector<LteNrTddSlotType> fddGenerationPattern;
-        fddGenerationPattern.resize(pattern.size(), LteNrTddSlotType::F);
-
-        /* if we have to generate structs for a TDD pattern, then use the input pattern.
-         * Otherwise, pass to the gen functions a pattern which is all F (therefore, the
-         * the function will think that they will be able to transmit or
-         * receive things following n0, n1, n2, that is what happen in FDD, just in
-         * another band..
-         */
-
-        const std::vector<LteNrTddSlotType> *generationPattern;
-
-        if (IsTdd(pattern)) {
-            generationPattern = &pattern;
-        } else {
-            generationPattern = &fddGenerationPattern;
-        }
-
-        for (uint32_t i = 0; i < n; i++) {
-            if ((*generationPattern)[i] == LteNrTddSlotType::UL) {
-                GenerateDciMaps(*generationPattern, toSendUl, generateUl, i, n2, l1l2CtrlLatency);
-            } else if ((*generationPattern)[i] == LteNrTddSlotType::DL ||
-                       pattern[i] == LteNrTddSlotType::S) {
-                GenerateDciMaps(*generationPattern, toSendDl, generateDl, i, n0, l1l2CtrlLatency);
-
-                int32_t k1 = ReturnHarqSlot(*generationPattern, i, n1);
-                (*dlHarqfbPosition).insert(std::make_pair(i, k1));
-            } else if ((*generationPattern)[i] == LteNrTddSlotType::F) {
-                GenerateDciMaps(*generationPattern, toSendDl, generateDl, i, n0, l1l2CtrlLatency);
-                GenerateDciMaps(*generationPattern, toSendUl, generateUl, i, n2, l1l2CtrlLatency);
-
-                int32_t k1 = ReturnHarqSlot(*generationPattern, i, n1);
-                (*dlHarqfbPosition).insert(std::make_pair(i, k1));
-            }
-        }
-
-        /*
-         * Now, if the input pattern is for FDD, remove the elements in the
-         * opposite generate* structures: in the end, we don't want to generate DL
-         * for a FDD-UL band, right?
-         *
-         * But.. maintain the toSend structures, as they will be used to send
-         * feedback or other messages, like DCI.
-         */
-
-        if (!IsTdd(pattern)) {
-            if (HasUlSlot(pattern)) {
-                generateDl->clear();
-            } else {
-                generateUl->clear();
-            }
-        }
-
-        for (auto &list: (*generateUl)) {
-            std::stable_sort(list.second.begin(), list.second.end());
-        }
-
-        for (auto &list: (*generateDl)) {
-            std::stable_sort(list.second.begin(), list.second.end());
-        }
-    }
-
-    void
-    NrGnbPhy::PushDlAllocation(const SfnSf &sfnSf) const {
-        NS_LOG_FUNCTION(this);
-        NS_ASSERT(m_phySapUser);
-
-        auto dci = m_phySapUser->GetDlCtrlDci();
-        VarTtiAllocInfo dlCtrlVarTti(dci);
-
-        SlotAllocInfo slotAllocInfo = SlotAllocInfo(sfnSf);
-
-        slotAllocInfo.m_numSymAlloc = dlCtrlVarTti.m_dci->m_numSym;
-        slotAllocInfo.m_type = SlotAllocInfo::DL;
-        slotAllocInfo.m_varTtiAllocInfo.emplace_back(dlCtrlVarTti);
-
-        m_phySapProvider->SetSlotAllocInfo(slotAllocInfo);
-    }
-
-    void
-    NrGnbPhy::PushUlAllocation(const SfnSf &sfnSf) const {
-        NS_LOG_FUNCTION(this);
-        NS_ASSERT(m_phySapUser);
-
-        auto dci = m_phySapUser->GetUlCtrlDci();
-        VarTtiAllocInfo ulCtrlVarTti(dci);
-
-        SlotAllocInfo slotAllocInfo = SlotAllocInfo(sfnSf);
-
-        slotAllocInfo.m_numSymAlloc = ulCtrlVarTti.m_dci->m_numSym;
-        slotAllocInfo.m_type = SlotAllocInfo::UL;
-        slotAllocInfo.m_varTtiAllocInfo.emplace_back(ulCtrlVarTti);
-
-        m_phySapProvider->SetSlotAllocInfo(slotAllocInfo);
-    }
-
-    void
-    NrGnbPhy::SetTddPattern(const std::vector<LteNrTddSlotType> &pattern) {
-        NS_LOG_FUNCTION(this);
-
-        std::stringstream ss;
-
-        for (const auto &v: pattern) {
-            ss << v << "|";
-        }
-        NS_LOG_INFO("Set pattern : " << ss.str());
-
-        m_tddPattern = pattern;
-
-        m_generateDl.clear();
-        m_generateUl.clear();
-        m_toSendDl.clear();
-        m_toSendUl.clear();
-        m_dlHarqfbPosition.clear();
-
-        GenerateStructuresFromPattern(pattern,
-                                      &m_toSendDl,
-                                      &m_toSendUl,
-                                      &m_generateDl,
-                                      &m_generateUl,
-                                      &m_dlHarqfbPosition,
-                                      0,
-                                      GetN2Delay(),
-                                      GetN1Delay(),
-                                      GetL1L2CtrlLatency());
-    }
-
-    void
-            NrGnbPhy::ScheduleStartEventLoop(uint32_t
-    nodeId,
-    uint16_t frame, uint8_t
-    subframe,
-    uint16_t slot
-    ) {
-NS_LOG_FUNCTION(this);
-Simulator::ScheduleWithContext(nodeId,
-        MilliSeconds(0),
-        &NrGnbPhy::StartEventLoop,
-this,
-frame,
-subframe,
-slot);
+    (*toSend)[dciSlot.indexDci].push_back(static_cast<uint32_t>(dciSlot.k));
+    (*generate)[indexGen].push_back(kWithCtrlLatency);
 }
 
 void
-NrGnbPhy::StartEventLoop(uint16_t frame, uint8_t subframe, uint16_t slot) {
+NrGnbPhy::GenerateStructuresFromPattern(const std::vector<LteNrTddSlotType>& pattern,
+                                        std::map<uint32_t, std::vector<uint32_t>>* toSendDl,
+                                        std::map<uint32_t, std::vector<uint32_t>>* toSendUl,
+                                        std::map<uint32_t, std::vector<uint32_t>>* generateDl,
+                                        std::map<uint32_t, std::vector<uint32_t>>* generateUl,
+                                        std::map<uint32_t, uint32_t>* dlHarqfbPosition,
+                                        uint32_t n0,
+                                        uint32_t n2,
+                                        uint32_t n1,
+                                        uint32_t l1l2CtrlLatency)
+{
+    const uint32_t n = static_cast<uint32_t>(pattern.size());
+
+    // Create a pattern that is all F.
+    std::vector<LteNrTddSlotType> fddGenerationPattern;
+    fddGenerationPattern.resize(pattern.size(), LteNrTddSlotType::F);
+
+    /* if we have to generate structs for a TDD pattern, then use the input pattern.
+     * Otherwise, pass to the gen functions a pattern which is all F (therefore, the
+     * the function will think that they will be able to transmit or
+     * receive things following n0, n1, n2, that is what happen in FDD, just in
+     * another band..
+     */
+
+    const std::vector<LteNrTddSlotType>* generationPattern;
+
+    if (IsTdd(pattern))
+    {
+        generationPattern = &pattern;
+    }
+    else
+    {
+        generationPattern = &fddGenerationPattern;
+    }
+
+    for (uint32_t i = 0; i < n; i++)
+    {
+        if ((*generationPattern)[i] == LteNrTddSlotType::UL)
+        {
+            GenerateDciMaps(*generationPattern, toSendUl, generateUl, i, n2, l1l2CtrlLatency);
+        }
+        else if ((*generationPattern)[i] == LteNrTddSlotType::DL ||
+                 pattern[i] == LteNrTddSlotType::S)
+        {
+            GenerateDciMaps(*generationPattern, toSendDl, generateDl, i, n0, l1l2CtrlLatency);
+
+            int32_t k1 = ReturnHarqSlot(*generationPattern, i, n1);
+            (*dlHarqfbPosition).insert(std::make_pair(i, k1));
+        }
+        else if ((*generationPattern)[i] == LteNrTddSlotType::F)
+        {
+            GenerateDciMaps(*generationPattern, toSendDl, generateDl, i, n0, l1l2CtrlLatency);
+            GenerateDciMaps(*generationPattern, toSendUl, generateUl, i, n2, l1l2CtrlLatency);
+
+            int32_t k1 = ReturnHarqSlot(*generationPattern, i, n1);
+            (*dlHarqfbPosition).insert(std::make_pair(i, k1));
+        }
+    }
+
+    /*
+     * Now, if the input pattern is for FDD, remove the elements in the
+     * opposite generate* structures: in the end, we don't want to generate DL
+     * for a FDD-UL band, right?
+     *
+     * But.. maintain the toSend structures, as they will be used to send
+     * feedback or other messages, like DCI.
+     */
+
+    if (!IsTdd(pattern))
+    {
+        if (HasUlSlot(pattern))
+        {
+            generateDl->clear();
+        }
+        else
+        {
+            generateUl->clear();
+        }
+    }
+
+    for (auto& list : (*generateUl))
+    {
+        std::stable_sort(list.second.begin(), list.second.end());
+    }
+
+    for (auto& list : (*generateDl))
+    {
+        std::stable_sort(list.second.begin(), list.second.end());
+    }
+}
+
+void
+NrGnbPhy::PushDlAllocation(const SfnSf& sfnSf) const
+{
+    NS_LOG_FUNCTION(this);
+    NS_ASSERT(m_phySapUser);
+
+    auto dci = m_phySapUser->GetDlCtrlDci();
+    VarTtiAllocInfo dlCtrlVarTti(dci);
+
+    SlotAllocInfo slotAllocInfo = SlotAllocInfo(sfnSf);
+
+    slotAllocInfo.m_numSymAlloc = dlCtrlVarTti.m_dci->m_numSym;
+    slotAllocInfo.m_type = SlotAllocInfo::DL;
+    slotAllocInfo.m_varTtiAllocInfo.emplace_back(dlCtrlVarTti);
+
+    m_phySapProvider->SetSlotAllocInfo(slotAllocInfo);
+}
+
+void
+NrGnbPhy::PushUlAllocation(const SfnSf& sfnSf) const
+{
+    NS_LOG_FUNCTION(this);
+    NS_ASSERT(m_phySapUser);
+
+    auto dci = m_phySapUser->GetUlCtrlDci();
+    VarTtiAllocInfo ulCtrlVarTti(dci);
+
+    SlotAllocInfo slotAllocInfo = SlotAllocInfo(sfnSf);
+
+    slotAllocInfo.m_numSymAlloc = ulCtrlVarTti.m_dci->m_numSym;
+    slotAllocInfo.m_type = SlotAllocInfo::UL;
+    slotAllocInfo.m_varTtiAllocInfo.emplace_back(ulCtrlVarTti);
+
+    m_phySapProvider->SetSlotAllocInfo(slotAllocInfo);
+}
+
+void
+NrGnbPhy::SetTddPattern(const std::vector<LteNrTddSlotType>& pattern)
+{
+    NS_LOG_FUNCTION(this);
+
+    std::stringstream ss;
+
+    for (const auto& v : pattern)
+    {
+        ss << v << "|";
+    }
+    NS_LOG_INFO("Set pattern : " << ss.str());
+
+    m_tddPattern = pattern;
+
+    m_generateDl.clear();
+    m_generateUl.clear();
+    m_toSendDl.clear();
+    m_toSendUl.clear();
+    m_dlHarqfbPosition.clear();
+
+    GenerateStructuresFromPattern(pattern,
+                                  &m_toSendDl,
+                                  &m_toSendUl,
+                                  &m_generateDl,
+                                  &m_generateUl,
+                                  &m_dlHarqfbPosition,
+                                  0,
+                                  GetN2Delay(),
+                                  GetN1Delay(),
+                                  GetL1L2CtrlLatency());
+}
+
+void
+NrGnbPhy::ScheduleStartEventLoop(uint32_t nodeId, uint16_t frame, uint8_t subframe, uint16_t slot)
+{
+    NS_LOG_FUNCTION(this);
+    Simulator::ScheduleWithContext(nodeId,
+                                   MilliSeconds(0),
+                                   &NrGnbPhy::StartEventLoop,
+                                   this,
+                                   frame,
+                                   subframe,
+                                   slot);
+}
+
+void
+NrGnbPhy::StartEventLoop(uint16_t frame, uint8_t subframe, uint16_t slot)
+{
     NS_LOG_FUNCTION(this);
     NS_LOG_DEBUG("PHY starting. Configuration: "
-                         << std::endl
-                         << "\t TxPower: " << m_txPower << " dBm" << std::endl
-                         << "\t NoiseFigure: " << m_noiseFigure << std::endl
-                         << "\t N0: " << m_n0Delay << std::endl
-                         << "\t N1: " << m_n1Delay << std::endl
-                         << "\t N2: " << m_n2Delay << std::endl
-                         << "\t TbDecodeLatency: " << GetTbDecodeLatency().GetMicroSeconds() << " us "
-                         << std::endl
-                         << "\t Numerology: " << GetNumerology() << std::endl
-                         << "\t SymbolsPerSlot: " << GetSymbolsPerSlot() << std::endl
-                         << "\t Pattern: " << GetPattern() << std::endl
-                         << "Attached to physical channel: " << std::endl
-                         << "\t Channel bandwidth: " << GetChannelBandwidth() << " Hz" << std::endl
-                         << "\t Channel central freq: " << GetCentralFrequency() << " Hz" << std::endl
-                         << "\t Num. RB: " << GetRbNum());
-   // m_available_prb = GetRbNum();
-    std::cout<< "Available PRB for Cell " << GetCellId() << ": " << GetRbNum()<< std::endl;
+                 << std::endl
+                 << "\t TxPower: " << m_txPower << " dBm" << std::endl
+                 << "\t NoiseFigure: " << m_noiseFigure << std::endl
+                 << "\t N0: " << m_n0Delay << std::endl
+                 << "\t N1: " << m_n1Delay << std::endl
+                 << "\t N2: " << m_n2Delay << std::endl
+                 << "\t TbDecodeLatency: " << GetTbDecodeLatency().GetMicroSeconds() << " us "
+                 << std::endl
+                 << "\t Numerology: " << GetNumerology() << std::endl
+                 << "\t SymbolsPerSlot: " << GetSymbolsPerSlot() << std::endl
+                 << "\t Pattern: " << GetPattern() << std::endl
+                 << "Attached to physical channel: " << std::endl
+                 << "\t Channel bandwidth: " << GetChannelBandwidth() << " Hz" << std::endl
+                 << "\t Channel central freq: " << GetCentralFrequency() << " Hz" << std::endl
+                 << "\t Num. RB: " << GetRbNum());
     SfnSf startSlot(frame, subframe, slot, GetNumerology());
+    std::cout<< "Available PRB for Cell " << GetCellId() << ": " << GetRbNum()<< std::endl;
     InitializeMessageList();
     StartSlot(startSlot);
 }
 
 void
-NrGnbPhy::SetGnbCphySapUser(NrGnbCphySapUser *s) {
+NrGnbPhy::SetGnbCphySapUser(NrGnbCphySapUser* s)
+{
     NS_LOG_FUNCTION(this);
     m_gnbCphySapUser = s;
 }
 
-NrGnbCphySapProvider *
-NrGnbPhy::GetGnbCphySapProvider() {
+NrGnbCphySapProvider*
+NrGnbPhy::GetGnbCphySapProvider()
+{
     NS_LOG_FUNCTION(this);
     return m_gnbCphySapProvider;
 }
 
 void
-NrGnbPhy::SetNrFhPhySapProvider(NrFhPhySapProvider *s) {
+NrGnbPhy::SetNrFhPhySapProvider(NrFhPhySapProvider* s)
+{
     m_nrFhPhySapProvider = s;
 }
 
-NrFhPhySapUser *
-NrGnbPhy::GetNrFhPhySapUser() {
+NrFhPhySapUser*
+NrGnbPhy::GetNrFhPhySapUser()
+{
     return m_nrFhPhySapUser;
 }
 
 uint32_t
-NrGnbPhy::GetN0Delay() const {
+NrGnbPhy::GetN0Delay() const
+{
     return m_n0Delay;
 }
 
 uint32_t
-NrGnbPhy::GetN1Delay() const {
+NrGnbPhy::GetN1Delay() const
+{
     return m_n1Delay;
 }
 
 uint32_t
-NrGnbPhy::GetN2Delay() const {
+NrGnbPhy::GetN2Delay() const
+{
     return m_n2Delay;
 }
 
 void
-NrGnbPhy::SetN0Delay(uint32_t delay) {
+NrGnbPhy::SetN0Delay(uint32_t delay)
+{
     m_n0Delay = delay;
     SetTddPattern(m_tddPattern); // Update the generate/send structures
 }
 
 void
-NrGnbPhy::SetN1Delay(uint32_t delay) {
+NrGnbPhy::SetN1Delay(uint32_t delay)
+{
     m_n1Delay = delay;
     SetTddPattern(m_tddPattern); // Update the generate/send structures
 }
 
 void
-NrGnbPhy::SetN2Delay(uint32_t delay) {
+NrGnbPhy::SetN2Delay(uint32_t delay)
+{
     m_n2Delay = delay;
     SetTddPattern(m_tddPattern); // Update the generate/send structures
 }
 
 bool
-NrGnbPhy::DoesFhAllocationFit(uint16_t bwpId, uint32_t mcs, uint32_t nRegs, uint8_t dlRank) const {
+NrGnbPhy::DoesFhAllocationFit(uint16_t bwpId, uint32_t mcs, uint32_t nRegs, uint8_t dlRank) const
+{
     NS_LOG_FUNCTION(this);
     NS_ASSERT(m_nrFhPhySapProvider);
     return m_nrFhPhySapProvider->DoesAllocationFit(bwpId, mcs, nRegs, dlRank);
 }
 
 BeamId
-NrGnbPhy::GetBeamId(uint16_t rnti) const {
+NrGnbPhy::GetBeamId(uint16_t rnti) const
+{
     NS_LOG_FUNCTION(this);
 
-    for (const auto &i: m_deviceMap) {
-        Ptr <NrUeNetDevice> ueDev = DynamicCast<NrUeNetDevice>(i);
+    for (const auto& i : m_deviceMap)
+    {
+        Ptr<NrUeNetDevice> ueDev = DynamicCast<NrUeNetDevice>(i);
         uint64_t ueRnti = (DynamicCast<NrUePhy>(ueDev->GetPhy(GetBwpId())))->GetRnti();
 
-        if (ueRnti == rnti) {
+        if (ueRnti == rnti)
+        {
             NS_ASSERT(m_spectrumPhy->GetBeamManager());
             return m_spectrumPhy->GetBeamManager()->GetBeamId(i);
         }
@@ -554,47 +601,56 @@ NrGnbPhy::GetBeamId(uint16_t rnti) const {
 }
 
 void
-NrGnbPhy::SetCam(const Ptr <NrChAccessManager> &cam) {
+NrGnbPhy::SetCam(const Ptr<NrChAccessManager>& cam)
+{
     NS_LOG_FUNCTION(this);
     NS_ASSERT(cam != nullptr);
     m_cam = cam;
     m_cam->SetAccessGrantedCallback(
-            std::bind(&NrGnbPhy::ChannelAccessGranted, this, std::placeholders::_1));
+        std::bind(&NrGnbPhy::ChannelAccessGranted, this, std::placeholders::_1));
     m_cam->SetAccessDeniedCallback(std::bind(&NrGnbPhy::ChannelAccessLost, this));
 }
 
-Ptr <NrChAccessManager>
-NrGnbPhy::GetCam() const {
+Ptr<NrChAccessManager>
+NrGnbPhy::GetCam() const
+{
     NS_LOG_FUNCTION(this);
     return m_cam;
 }
 
 void
-NrGnbPhy::SetTxPower(double pow) {
+NrGnbPhy::SetTxPower(double pow)
+{
     m_txPower = pow;
     NS_LOG_DEBUG("TxPower1: " << pow);
 }
 
 double
-NrGnbPhy::GetTxPower() const {
+NrGnbPhy::GetTxPower() const
+{
     return m_txPower;
 }
 
 void
-NrGnbPhy::SetSubChannels(const std::vector<int> &rbIndexVector, size_t nTotalAllocRbs) {
-    Ptr <SpectrumValue> txPsd = GetTxPowerSpectralDensity(rbIndexVector);
+NrGnbPhy::SetSubChannels(const std::vector<int>& rbIndexVector, size_t nTotalAllocRbs)
+{
+    Ptr<SpectrumValue> txPsd = GetTxPowerSpectralDensity(rbIndexVector);
     NS_ASSERT(txPsd);
 
     // In case of UNIFORM_POWER_ALLOCATION_USED, the txPsd created by GetTxPowerSpectralDensity
     // assumed that the transmit power would be split only among RBs allocated to this signal/UE.
     // This assumption is false when there are concurrent transmissions on other RBs to other UEs
     // (OFDMA DL). To correct this, use the combined number of used RBs to scale down txPsd.
-    if (GetPowerAllocationType() == NrSpectrumValueHelper::UNIFORM_POWER_ALLOCATION_USED) {
+    if (GetPowerAllocationType() == NrSpectrumValueHelper::UNIFORM_POWER_ALLOCATION_USED)
+    {
         auto scaling = double(rbIndexVector.size()) / double(nTotalAllocRbs);
-        for (auto it = txPsd->ValuesBegin(); it != txPsd->ValuesEnd(); it++) {
+        for (auto it = txPsd->ValuesBegin(); it != txPsd->ValuesEnd(); it++)
+        {
             *it *= scaling;
         }
-    } else {
+    }
+    else
+    {
         // UNIFORM_POWER_ALLOCATION_BW: no scaling required
     }
 
@@ -602,28 +658,31 @@ NrGnbPhy::SetSubChannels(const std::vector<int> &rbIndexVector, size_t nTotalAll
 }
 
 void
-NrGnbPhy::QueueMib() {
+NrGnbPhy::QueueMib()
+{
     NS_LOG_FUNCTION(this);
     NrRrcSap::MasterInformationBlock mib;
     mib.dlBandwidth = GetChannelBandwidth() / (1000 * 100);
     mib.systemFrameNumber = 1;
-    Ptr <NrMibMessage> mibMsg = Create<NrMibMessage>();
+    Ptr<NrMibMessage> mibMsg = Create<NrMibMessage>();
     mibMsg->SetSourceBwp(GetBwpId());
     mibMsg->SetMib(mib);
     EnqueueCtrlMsgNow(mibMsg);
 }
 
 void
-NrGnbPhy::QueueSib() {
+NrGnbPhy::QueueSib()
+{
     NS_LOG_FUNCTION(this);
-    Ptr <NrSib1Message> msg = Create<NrSib1Message>();
+    Ptr<NrSib1Message> msg = Create<NrSib1Message>();
     msg->SetSib1(m_sib1);
     msg->SetSourceBwp(GetBwpId());
     EnqueueCtrlMsgNow(msg);
 }
 
 void
-NrGnbPhy::CallMacForSlotIndication(const SfnSf &currentSlot) {
+NrGnbPhy::CallMacForSlotIndication(const SfnSf& currentSlot)
+{
     NS_LOG_FUNCTION(this);
     NS_ASSERT(!m_generateDl.empty() || !m_generateUl.empty());
 
@@ -634,7 +693,8 @@ NrGnbPhy::CallMacForSlotIndication(const SfnSf &currentSlot) {
     NS_LOG_DEBUG("Start Slot " << currentSlot << ". In position " << currentSlotN
                                << " there is a slot of type " << m_tddPattern[currentSlotN]);
 
-    for (const auto &k2WithLatency: m_generateUl[currentSlotN]) {
+    for (const auto& k2WithLatency : m_generateUl[currentSlotN])
+    {
         SfnSf targetSlot = currentSlot;
         targetSlot.Add(k2WithLatency);
 
@@ -646,7 +706,8 @@ NrGnbPhy::CallMacForSlotIndication(const SfnSf &currentSlot) {
         m_phySapUser->SlotUlIndication(targetSlot, m_tddPattern[pos]);
     }
 
-    for (const auto &k0WithLatency: m_generateDl[currentSlotN]) {
+    for (const auto& k0WithLatency : m_generateDl[currentSlotN])
+    {
         SfnSf targetSlot = currentSlot;
         targetSlot.Add(k0WithLatency);
 
@@ -660,7 +721,8 @@ NrGnbPhy::CallMacForSlotIndication(const SfnSf &currentSlot) {
 }
 
 void
-NrGnbPhy::StartSlot(const SfnSf &startSlot) {
+NrGnbPhy::StartSlot(const SfnSf& startSlot)
+{
     NS_LOG_FUNCTION(this);
     NS_ASSERT(m_channelStatus != TO_LOSE);
 
@@ -671,26 +733,33 @@ NrGnbPhy::StartSlot(const SfnSf &startSlot) {
 
     // update the current slot allocation; if empty (e.g., at the beginning of simu)
     // then insert a dummy allocation, without anything.
-    if (SlotAllocInfoExists(m_currentSlot)) {
+    if (SlotAllocInfoExists(m_currentSlot))
+    {
         m_currSlotAllocInfo = RetrieveSlotAllocInfo(m_currentSlot);
-    } else {
+    }
+    else
+    {
         NS_LOG_WARN("No allocation for the current slot. Using an empty one");
         m_currSlotAllocInfo = SlotAllocInfo(m_currentSlot);
     }
 
-    if (m_isPrimary) {
-        if (m_currentSlot.GetSlot() == 0) {
+    if (m_isPrimary)
+    {
+        if (m_currentSlot.GetSlot() == 0)
+        {
             bool mibOrSib = false;
             if (m_currentSlot.GetSubframe() == 0) // send MIB at the beginning of each frame
             {
                 QueueMib();
                 mibOrSib = true;
-            } else if (m_currentSlot.GetSubframe() == 5) // send SIB at beginning of second half-frame
+            }
+            else if (m_currentSlot.GetSubframe() == 5) // send SIB at beginning of second half-frame
             {
                 QueueSib();
                 mibOrSib = true;
             }
-            if (mibOrSib && !m_currSlotAllocInfo.ContainsDlCtrlAllocation()) {
+            if (mibOrSib && !m_currSlotAllocInfo.ContainsDlCtrlAllocation())
+            {
                 VarTtiAllocInfo dlCtrlSlot(m_phySapUser->GetDlCtrlDci());
                 m_currSlotAllocInfo.m_varTtiAllocInfo.push_front(dlCtrlSlot);
                 m_currSlotAllocInfo.m_numSymAlloc += m_phySapUser->GetDlCtrlSymbols();
@@ -698,18 +767,23 @@ NrGnbPhy::StartSlot(const SfnSf &startSlot) {
         }
     }
 
-    if (m_channelStatus == GRANTED) {
+    if (m_channelStatus == GRANTED)
+    {
         NS_LOG_INFO("Channel granted");
         CallMacForSlotIndication(m_currentSlot);
         DoStartSlot();
-    } else {
+    }
+    else
+    {
         bool hasUlDci = false;
         SfnSf ulSfn = m_currentSlot;
         ulSfn.Add(GetN2Delay());
 
-        if (GetN2Delay() > 0) {
-            if (SlotAllocInfoExists(ulSfn)) {
-                SlotAllocInfo &ulSlot = PeekSlotAllocInfo(ulSfn);
+        if (GetN2Delay() > 0)
+        {
+            if (SlotAllocInfoExists(ulSfn))
+            {
+                SlotAllocInfo& ulSlot = PeekSlotAllocInfo(ulSfn);
                 hasUlDci = ulSlot.ContainsDataAllocation() || ulSlot.ContainsUlCtrlAllocation() ||
                            ulSlot.ContainsUlMsg3Allocation();
             }
@@ -719,13 +793,16 @@ NrGnbPhy::StartSlot(const SfnSf &startSlot) {
         // will come from another BWP.
         if (m_currSlotAllocInfo.ContainsDataAllocation() ||
             m_currSlotAllocInfo.ContainsDlCtrlAllocation() ||
-            m_currSlotAllocInfo.ContainsUlMsg3Allocation() || hasUlDci) {
+            m_currSlotAllocInfo.ContainsUlMsg3Allocation() || hasUlDci)
+        {
             // Request the channel access
-            if (m_channelStatus == NONE) {
+            if (m_channelStatus == NONE)
+            {
                 NS_LOG_INFO("Channel not granted, request the channel");
                 m_channelStatus = REQUESTED; // This goes always before RequestAccess()
                 m_cam->RequestAccess();
-                if (m_channelStatus == GRANTED) {
+                if (m_channelStatus == GRANTED)
+                {
                     // Repetition but we can have a CAM that gives the channel
                     // instantaneously
                     NS_LOG_INFO("Channel granted; asking MAC for SlotIndication for the future and "
@@ -741,14 +818,19 @@ NrGnbPhy::StartSlot(const SfnSf &startSlot) {
             auto newSfnSf = slotAllocCopy.m_sfnSf;
             newSfnSf.Add(1);
             NS_LOG_INFO("Queueing allocation in front for " << newSfnSf);
-            if (m_currSlotAllocInfo.ContainsDataAllocation()) {
+            if (m_currSlotAllocInfo.ContainsDataAllocation())
+            {
                 NS_LOG_INFO("Reason: Current slot allocation has data");
-            } else {
+            }
+            else
+            {
                 NS_LOG_INFO("Reason: CTRL message list is not empty");
             }
 
             PushFrontSlotAllocInfo(newSfnSf, slotAllocCopy);
-        } else {
+        }
+        else
+        {
             // It's an empty slot; ask the MAC for a new one (maybe a new data will arrive..)
             // and just let the current one go away
             NS_LOG_INFO("Empty slot, but asking MAC for SlotIndication for the future, maybe there "
@@ -758,15 +840,20 @@ NrGnbPhy::StartSlot(const SfnSf &startSlot) {
         // If we have the UL CTRL, then schedule it (we are listening, so
         // we don't need the channel.
 
-        if (!m_currSlotAllocInfo.m_varTtiAllocInfo.empty()) {
-            for (const auto &alloc: m_currSlotAllocInfo.m_varTtiAllocInfo) {
+        if (!m_currSlotAllocInfo.m_varTtiAllocInfo.empty())
+        {
+            for (const auto& alloc : m_currSlotAllocInfo.m_varTtiAllocInfo)
+            {
                 if (alloc.m_dci->m_type == DciInfoElementTdma::CTRL &&
-                    alloc.m_dci->m_format == DciInfoElementTdma::UL) {
+                    alloc.m_dci->m_format == DciInfoElementTdma::UL)
+                {
                     Time start = GetSymbolPeriod() * alloc.m_dci->m_symStart;
                     NS_LOG_INFO("Schedule UL CTRL at " << start);
                     Simulator::Schedule(start, &NrGnbPhy::UlCtrl, this, alloc.m_dci);
-                } else if (alloc.m_dci->m_type == DciInfoElementTdma::SRS &&
-                           alloc.m_dci->m_format == DciInfoElementTdma::UL) {
+                }
+                else if (alloc.m_dci->m_type == DciInfoElementTdma::SRS &&
+                         alloc.m_dci->m_format == DciInfoElementTdma::UL)
+                {
                     Time start = GetSymbolPeriod() * alloc.m_dci->m_symStart;
                     NS_LOG_INFO("Schedule UL SRS at " << start);
                     Simulator::Schedule(start, &NrGnbPhy::UlSrs, this, alloc.m_dci);
@@ -777,7 +864,8 @@ NrGnbPhy::StartSlot(const SfnSf &startSlot) {
 }
 
 void
-NrGnbPhy::DoCheckOrReleaseChannel() {
+NrGnbPhy::DoCheckOrReleaseChannel()
+{
     NS_LOG_FUNCTION(this);
 
     NS_ASSERT(m_channelStatus == GRANTED);
@@ -786,24 +874,29 @@ NrGnbPhy::DoCheckOrReleaseChannel() {
 
     // Assuming the scheduler assign contiguous symbol
     uint8_t lastDlSymbol = 0;
-    for (auto &dci: m_currSlotAllocInfo.m_varTtiAllocInfo) {
+    for (auto& dci : m_currSlotAllocInfo.m_varTtiAllocInfo)
+    {
         if (dci.m_dci->m_type == DciInfoElementTdma::DATA &&
-            dci.m_dci->m_format == DciInfoElementTdma::DL) {
+            dci.m_dci->m_format == DciInfoElementTdma::DL)
+        {
             lastDlSymbol =
-                    std::max(lastDlSymbol,
-                             static_cast<uint8_t>(dci.m_dci->m_symStart + dci.m_dci->m_numSym));
+                std::max(lastDlSymbol,
+                         static_cast<uint8_t>(dci.m_dci->m_symStart + dci.m_dci->m_numSym));
         }
     }
 
     Time lastDataTime = GetSymbolPeriod() * lastDlSymbol;
 
-    if (GetSlotPeriod() - lastDataTime > MicroSeconds(25)) {
+    if (GetSlotPeriod() - lastDataTime > MicroSeconds(25))
+    {
         NS_LOG_LOGIC("Last symbol of data: " << +lastDlSymbol
                                              << ", to the end of slot we still have "
                                              << (GetSlotPeriod() - lastDataTime).GetMicroSeconds()
                                              << " us, so we're going to lose the channel");
         m_channelStatus = TO_LOSE;
-    } else {
+    }
+    else
+    {
         NS_LOG_LOGIC("Last symbol of data: " << +lastDlSymbol
                                              << ", to the end of slot we still have "
                                              << (GetSlotPeriod() - lastDataTime).GetMicroSeconds()
@@ -812,24 +905,30 @@ NrGnbPhy::DoCheckOrReleaseChannel() {
 }
 
 void
-NrGnbPhy::RetrievePrepareEncodeCtrlMsgs() {
+NrGnbPhy::RetrievePrepareEncodeCtrlMsgs()
+{
     NS_LOG_FUNCTION(this);
     auto ctrlMsgs = PopCurrentSlotCtrlMsgs();
     ctrlMsgs.sort();
     ctrlMsgs.merge(RetrieveMsgsFromDCIs(m_currentSlot));
 
-    if (m_netDevice != nullptr) {
+    if (m_netDevice != nullptr)
+    {
         DynamicCast<NrGnbNetDevice>(m_netDevice)->RouteOutgoingCtrlMsgs(ctrlMsgs, GetBwpId());
-    } else {
+    }
+    else
+    {
         // No netDevice (that could happen in tests) so just redirect them to us
-        for (const auto &msg: ctrlMsgs) {
+        for (const auto& msg : ctrlMsgs)
+        {
             EncodeCtrlMsg(msg);
         }
     }
 }
 
 void
-NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo &allocInfo) const {
+NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo& allocInfo) const
+{
     NS_LOG_FUNCTION(this);
     std::unordered_set<uint16_t> activeUe;
     uint32_t availRb = GetRbNum();
@@ -841,13 +940,15 @@ NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo &allocInfo) const {
     int lastSymStart = -1;
     uint32_t symUsed = 0;
 
-    for (const auto &allocation: allocInfo.m_varTtiAllocInfo) {
+    for (const auto& allocation : allocInfo.m_varTtiAllocInfo)
+    {
         uint32_t rbg = std::count(allocation.m_dci->m_rbgBitmask.begin(),
                                   allocation.m_dci->m_rbgBitmask.end(),
                                   1);
 
         // First: Store the RNTI of the UE in the active list
-        if (allocation.m_dci->m_rnti != 0) {
+        if (allocation.m_dci->m_rnti != 0)
+        {
             activeUe.insert(allocation.m_dci->m_rnti);
         }
 
@@ -855,19 +956,26 @@ NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo &allocInfo) const {
 
         auto rbgUsed = (rbg * GetNumRbPerRbg()) * allocation.m_dci->m_numSym;
         if (allocation.m_dci->m_type == DciInfoElementTdma::DATA ||
-            allocation.m_dci->m_type == DciInfoElementTdma::MSG3) {
+            allocation.m_dci->m_type == DciInfoElementTdma::MSG3)
+        {
             dataReg += rbgUsed;
-        } else {
+        }
+        else
+        {
             ctrlReg += rbgUsed;
         }
 
-        if (lastSymStart != allocation.m_dci->m_symStart) {
+        if (lastSymStart != allocation.m_dci->m_symStart)
+        {
             symUsed += allocation.m_dci->m_numSym;
 
             if (allocation.m_dci->m_type == DciInfoElementTdma::DATA ||
-                allocation.m_dci->m_type == DciInfoElementTdma::MSG3) {
+                allocation.m_dci->m_type == DciInfoElementTdma::MSG3)
+            {
                 dataSym += allocation.m_dci->m_numSym;
-            } else {
+            }
+            else
+            {
                 ctrlSym += allocation.m_dci->m_numSym;
             }
         }
@@ -898,18 +1006,21 @@ NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo &allocInfo) const {
 }
 
 void
-NrGnbPhy::DoStartSlot() {
+NrGnbPhy::DoStartSlot()
+{
     NS_LOG_FUNCTION(this);
     NS_ASSERT(m_ctrlMsgs.empty()); // This assert has to be re-evaluated for NR-U.
-    // We can have messages before we weren't able to tx them before.
+                                   // We can have messages before we weren't able to tx them before.
 
-    uint64_t currentSlotN = m_currentSlot.Normalize() % m_tddPattern.size();;
+    uint64_t currentSlotN = m_currentSlot.Normalize() % m_tddPattern.size();
+    ;
 
     NS_LOG_DEBUG("Start Slot " << m_currentSlot << " of type " << m_tddPattern[currentSlotN]);
 
     GenerateAllocationStatistics(m_currSlotAllocInfo);
 
-    if (m_currSlotAllocInfo.m_varTtiAllocInfo.empty()) {
+    if (m_currSlotAllocInfo.m_varTtiAllocInfo.empty())
+    {
         return;
     }
 
@@ -925,16 +1036,20 @@ NrGnbPhy::DoStartSlot() {
 }
 
 void
-NrGnbPhy::PrepareRbgAllocationMap(const std::deque<VarTtiAllocInfo> &allocations) {
+NrGnbPhy::PrepareRbgAllocationMap(const std::deque<VarTtiAllocInfo>& allocations)
+{
     NS_LOG_FUNCTION(this);
 
     // Start with a clean RBG allocation bitmask
     m_rbgAllocationPerSym.clear();
 
     // Create RBG map to know where to put power in DL
-    for (const auto &allocation: allocations) {
-        if (allocation.m_dci->m_type != DciInfoElementTdma::CTRL) {
-            if (allocation.m_dci->m_format == DciInfoElementTdma::DL) {
+    for (const auto& allocation : allocations)
+    {
+        if (allocation.m_dci->m_type != DciInfoElementTdma::CTRL)
+        {
+            if (allocation.m_dci->m_format == DciInfoElementTdma::DL)
+            {
                 // In m_rbgAllocationPerSym, store only the DL RBG set to 1:
                 // these will used to put power
                 StoreRBGAllocation(&m_rbgAllocationPerSym, allocation.m_dci);
@@ -945,8 +1060,9 @@ NrGnbPhy::PrepareRbgAllocationMap(const std::deque<VarTtiAllocInfo> &allocations
         }
     }
 
-    for (const auto &s: m_rbgAllocationPerSymDataStat) {
-        auto &rbgAllocation = s.second;
+    for (const auto& s : m_rbgAllocationPerSymDataStat)
+    {
+        auto& rbgAllocation = s.second;
         m_rbStatistics(m_currentSlot,
                        s.first,
                        FromRBGBitmaskToRBAssignment(rbgAllocation),
@@ -961,16 +1077,16 @@ NrGnbPhy::PrepareRbgAllocationMap(const std::deque<VarTtiAllocInfo> &allocations
         double prbUsagePercentage = 0.0;
         if (!FromRBGBitmaskToRBAssignment(rbgAllocation).empty()) {
             prbUsagePercentage =
-                    (static_cast<double>(FromRBGBitmaskToRBAssignment(rbgAllocation).size()) / totalAvailablePrbs) *
-                    100.0;
+                (static_cast<double>(FromRBGBitmaskToRBAssignment(rbgAllocation).size()) / totalAvailablePrbs) *
+                100.0;
         }
 
         // Get the last RB from rbMap or fallback to -1 if rbMap is empty
         int  lastRb = 0;
         lastRb = FromRBGBitmaskToRBAssignment(rbgAllocation).empty() ? -1 : FromRBGBitmaskToRBAssignment(
-                rbgAllocation).back();
+                                                                                rbgAllocation).back();
         RbStats rbStats= {0};
-       // rbStats.cellId = GetCellId();       // GetCellId() handles returning Cell ID,
+        // rbStats.cellId = GetCellId();       // GetCellId() handles returning Cell ID,
         rbStats.iterations = rbStats.iterations + 1;
         if (std::isnan(prbUsagePercentage))
         {
@@ -987,7 +1103,6 @@ NrGnbPhy::PrepareRbgAllocationMap(const std::deque<VarTtiAllocInfo> &allocations
         m_RbStats = rbStats;
         //std::cout << "store new values for RB Stats" << prbUsagePercentage << " , " << lastRb << std::endl;
     }
-
 
     m_rbgAllocationPerSymDataStat.clear();
 }
@@ -1022,11 +1137,13 @@ NrGnbPhy::GetRBStats() {
 }
 
 void
-NrGnbPhy::FillTheEvent() {
+NrGnbPhy::FillTheEvent()
+{
     NS_LOG_FUNCTION(this);
 
     uint8_t lastSymStart = 0;
-    for (const auto &allocation: m_currSlotAllocInfo.m_varTtiAllocInfo) {
+    for (const auto& allocation : m_currSlotAllocInfo.m_varTtiAllocInfo)
+    {
         NS_ASSERT(lastSymStart <= allocation.m_dci->m_symStart);
 
         auto varTtiStart = GetSymbolPeriod() * allocation.m_dci->m_symStart;
@@ -1040,35 +1157,41 @@ NrGnbPhy::FillTheEvent() {
 }
 
 void
-NrGnbPhy::StoreRBGAllocation(std::unordered_map<uint8_t, std::vector<uint8_t>> *map,
-                             const std::shared_ptr<DciInfoElementTdma> &dci) const {
+NrGnbPhy::StoreRBGAllocation(std::unordered_map<uint8_t, std::vector<uint8_t>>* map,
+                             const std::shared_ptr<DciInfoElementTdma>& dci) const
+{
     NS_LOG_FUNCTION(this);
 
     auto itAlloc = map->find(dci->m_symStart);
-    if (itAlloc == map->end()) {
+    if (itAlloc == map->end())
+    {
         itAlloc = map->insert(std::make_pair(dci->m_symStart, dci->m_rbgBitmask)).first;
-    } else {
-        auto &existingRBGBitmask = itAlloc->second;
+    }
+    else
+    {
+        auto& existingRBGBitmask = itAlloc->second;
         NS_ASSERT(existingRBGBitmask.size() == dci->m_rbgBitmask.size());
-        for (uint32_t i = 0; i < existingRBGBitmask.size(); ++i) {
+        for (uint32_t i = 0; i < existingRBGBitmask.size(); ++i)
+        {
             existingRBGBitmask.at(i) = existingRBGBitmask.at(i) | dci->m_rbgBitmask.at(i);
         }
     }
 }
 
-std::list<Ptr < NrControlMessage>>
-
-NrGnbPhy::RetrieveDciFromAllocation(const SlotAllocInfo &alloc,
-                                    const DciInfoElementTdma::DciFormat &format,
+std::list<Ptr<NrControlMessage>>
+NrGnbPhy::RetrieveDciFromAllocation(const SlotAllocInfo& alloc,
+                                    const DciInfoElementTdma::DciFormat& format,
                                     uint32_t kDelay,
-                                    uint32_t k1Delay) {
+                                    uint32_t k1Delay)
+{
     NS_LOG_FUNCTION(this);
-    std::list<Ptr < NrControlMessage>>
-    ctrlMsgs;
+    std::list<Ptr<NrControlMessage>> ctrlMsgs;
 
-    if (!alloc.m_buildRarList.empty()) {
-        Ptr <NrRarMessage> ulMsg3DciMsg = Create<NrRarMessage>();
-        for (const auto &rarIt: alloc.m_buildRarList) {
+    if (!alloc.m_buildRarList.empty())
+    {
+        Ptr<NrRarMessage> ulMsg3DciMsg = Create<NrRarMessage>();
+        for (const auto& rarIt : alloc.m_buildRarList)
+        {
             NrRarMessage::Rar rar{};
             // RA preamble and RNTI should be set before by MAC/scheduler
             NS_ASSERT(rarIt.raPreambleId != 255);
@@ -1083,17 +1206,20 @@ NrGnbPhy::RetrieveDciFromAllocation(const SlotAllocInfo &alloc,
                                    << "k1Delay:" << k1Delay);
             ulMsg3DciMsg->SetSourceBwp(GetBwpId());
         }
-        if (kDelay != 0) {
+        if (kDelay != 0)
+        {
             ctrlMsgs.push_back(ulMsg3DciMsg);
         }
     }
 
-    for (const auto &dlAlloc: alloc.m_varTtiAllocInfo) {
+    for (const auto& dlAlloc : alloc.m_varTtiAllocInfo)
+    {
         if (dlAlloc.m_dci->m_type != DciInfoElementTdma::CTRL &&
             dlAlloc.m_dci->m_type != DciInfoElementTdma::MSG3 // we are sending MSG3 grant via RAR
-            // message, we cannot also send UL DCI
-            && dlAlloc.m_dci->m_format == format) {
-            auto &dciElem = dlAlloc.m_dci;
+                                                              // message, we cannot also send UL DCI
+            && dlAlloc.m_dci->m_format == format)
+        {
+            auto& dciElem = dlAlloc.m_dci;
             NS_ASSERT(dciElem->m_format == format);
             NS_ASSERT_MSG(dciElem->m_symStart + dciElem->m_numSym <= GetSymbolsPerSlot(),
                           "symStart: " << static_cast<uint32_t>(dciElem->m_symStart)
@@ -1105,17 +1231,20 @@ NrGnbPhy::RetrieveDciFromAllocation(const SlotAllocInfo &alloc,
                                             << +dciElem->m_symStart << " to "
                                             << +dciElem->m_symStart + dciElem->m_numSym);
 
-            Ptr <NrControlMessage> msg;
+            Ptr<NrControlMessage> msg;
 
-            if (dciElem->m_format == DciInfoElementTdma::DL) {
-                Ptr <NrDlDciMessage> dciMsg = Create<NrDlDciMessage>(dciElem);
+            if (dciElem->m_format == DciInfoElementTdma::DL)
+            {
+                Ptr<NrDlDciMessage> dciMsg = Create<NrDlDciMessage>(dciElem);
 
                 dciMsg->SetSourceBwp(GetBwpId());
                 dciMsg->SetKDelay(kDelay);
                 dciMsg->SetK1Delay(k1Delay);
                 msg = dciMsg;
-            } else {
-                Ptr <NrUlDciMessage> dciMsg = Create<NrUlDciMessage>(dciElem);
+            }
+            else
+            {
+                Ptr<NrUlDciMessage> dciMsg = Create<NrUlDciMessage>(dciElem);
 
                 dciMsg->SetSourceBwp(GetBwpId());
                 dciMsg->SetKDelay(kDelay);
@@ -1129,60 +1258,71 @@ NrGnbPhy::RetrieveDciFromAllocation(const SlotAllocInfo &alloc,
     return ctrlMsgs;
 }
 
-std::list<Ptr < NrControlMessage>>
-
-NrGnbPhy::RetrieveMsgsFromDCIs(const SfnSf &currentSlot) {
-    std::list<Ptr < NrControlMessage>>
-    ctrlMsgs;
+std::list<Ptr<NrControlMessage>>
+NrGnbPhy::RetrieveMsgsFromDCIs(const SfnSf& currentSlot)
+{
+    std::list<Ptr<NrControlMessage>> ctrlMsgs;
     uint64_t currentSlotN = currentSlot.Normalize() % m_tddPattern.size();
 
     uint32_t k1delay = m_dlHarqfbPosition[currentSlotN];
 
     // TODO: copy paste :(
-    for (const auto &k0delay: m_toSendDl[currentSlotN]) {
+    for (const auto& k0delay : m_toSendDl[currentSlotN])
+    {
         SfnSf targetSlot = currentSlot;
 
         targetSlot.Add(k0delay);
 
-        if (targetSlot == currentSlot) {
+        if (targetSlot == currentSlot)
+        {
             NS_LOG_DEBUG(" in slot " << currentSlot << " send DL DCI for the same slot");
 
             ctrlMsgs.merge(RetrieveDciFromAllocation(m_currSlotAllocInfo,
                                                      DciInfoElementTdma::DL,
                                                      k0delay,
                                                      k1delay));
-        } else if (SlotAllocInfoExists(targetSlot)) {
+        }
+        else if (SlotAllocInfoExists(targetSlot))
+        {
             NS_LOG_DEBUG(" in slot " << currentSlot << " send DL DCI for " << targetSlot);
 
             ctrlMsgs.merge(RetrieveDciFromAllocation(PeekSlotAllocInfo(targetSlot),
                                                      DciInfoElementTdma::DL,
                                                      k0delay,
                                                      k1delay));
-        } else {
+        }
+        else
+        {
             NS_LOG_DEBUG("No allocation found for slot " << targetSlot);
         }
     }
 
-    for (const auto &k2delay: m_toSendUl[currentSlotN]) {
+    for (const auto& k2delay : m_toSendUl[currentSlotN])
+    {
         SfnSf targetSlot = currentSlot;
 
         targetSlot.Add(k2delay);
 
-        if (targetSlot == currentSlot) {
+        if (targetSlot == currentSlot)
+        {
             NS_LOG_DEBUG(" in slot " << currentSlot << " send UL DCI for the same slot");
 
             ctrlMsgs.merge(RetrieveDciFromAllocation(m_currSlotAllocInfo,
                                                      DciInfoElementTdma::UL,
                                                      k2delay,
                                                      k1delay));
-        } else if (SlotAllocInfoExists(targetSlot)) {
+        }
+        else if (SlotAllocInfoExists(targetSlot))
+        {
             NS_LOG_DEBUG(" in slot " << currentSlot << " send UL DCI for " << targetSlot);
 
             ctrlMsgs.merge(RetrieveDciFromAllocation(PeekSlotAllocInfo(targetSlot),
                                                      DciInfoElementTdma::UL,
                                                      k2delay,
                                                      k1delay));
-        } else {
+        }
+        else
+        {
             NS_LOG_DEBUG("No allocation found for slot " << targetSlot);
         }
     }
@@ -1191,7 +1331,8 @@ NrGnbPhy::RetrieveMsgsFromDCIs(const SfnSf &currentSlot) {
 }
 
 Time
-NrGnbPhy::DlCtrl(const std::shared_ptr<DciInfoElementTdma> &dci) {
+NrGnbPhy::DlCtrl(const std::shared_ptr<DciInfoElementTdma>& dci)
+{
     NS_LOG_FUNCTION(this);
 
     NS_LOG_DEBUG("Starting DL CTRL TTI at symbol " << +m_currSymStart << " to "
@@ -1201,22 +1342,26 @@ NrGnbPhy::DlCtrl(const std::shared_ptr<DciInfoElementTdma> &dci) {
     Time varTtiPeriod = GetSymbolPeriod() * dci->m_numSym;
 
     // The function that is filling m_ctrlMsgs is NrPhy::encodeCtrlMsgs
-    if (!m_ctrlMsgs.empty()) {
+    if (!m_ctrlMsgs.empty())
+    {
         NS_LOG_DEBUG("gNB TXing DL CTRL with "
-                             << m_ctrlMsgs.size() << " msgs, frame " << m_currentSlot << " symbols "
-                             << static_cast<uint32_t>(dci->m_symStart) << "-"
-                             << static_cast<uint32_t>(dci->m_symStart + dci->m_numSym - 1) << " start "
-                             << Simulator::Now() << " end "
-                             << Simulator::Now() + varTtiPeriod - NanoSeconds(1.0));
+                     << m_ctrlMsgs.size() << " msgs, frame " << m_currentSlot << " symbols "
+                     << static_cast<uint32_t>(dci->m_symStart) << "-"
+                     << static_cast<uint32_t>(dci->m_symStart + dci->m_numSym - 1) << " start "
+                     << Simulator::Now() << " end "
+                     << Simulator::Now() + varTtiPeriod - NanoSeconds(1.0));
 
-        for (auto &m_ctrlMsg: m_ctrlMsgs) {
-            Ptr <NrControlMessage> msg = m_ctrlMsg;
+        for (auto& m_ctrlMsg : m_ctrlMsgs)
+        {
+            Ptr<NrControlMessage> msg = m_ctrlMsg;
             m_phyTxedCtrlMsgsTrace(m_currentSlot, GetCellId(), dci->m_rnti, GetBwpId(), msg);
         }
 
         SendCtrlChannels(varTtiPeriod -
                          NanoSeconds(1.0)); // -1 ns ensures control ends before data period
-    } else {
+    }
+    else
+    {
         NS_LOG_DEBUG("No messages to send, skipping");
     }
 
@@ -1224,7 +1369,8 @@ NrGnbPhy::DlCtrl(const std::shared_ptr<DciInfoElementTdma> &dci) {
 }
 
 Time
-NrGnbPhy::UlCtrl(const std::shared_ptr<DciInfoElementTdma> &dci) {
+NrGnbPhy::UlCtrl(const std::shared_ptr<DciInfoElementTdma>& dci)
+{
     NS_LOG_FUNCTION(this);
 
     NS_LOG_DEBUG("Starting UL CTRL TTI at symbol " << +m_currSymStart << " to "
@@ -1233,14 +1379,15 @@ NrGnbPhy::UlCtrl(const std::shared_ptr<DciInfoElementTdma> &dci) {
     Time varTtiPeriod = GetSymbolPeriod() * dci->m_numSym;
 
     NS_LOG_DEBUG("gNB RXng UL CTRL frame "
-                         << m_currentSlot << " symbols " << static_cast<uint32_t>(dci->m_symStart) << "-"
-                         << static_cast<uint32_t>(dci->m_symStart + dci->m_numSym - 1) << " start "
-                         << Simulator::Now() << " end " << Simulator::Now() + varTtiPeriod);
+                 << m_currentSlot << " symbols " << static_cast<uint32_t>(dci->m_symStart) << "-"
+                 << static_cast<uint32_t>(dci->m_symStart + dci->m_numSym - 1) << " start "
+                 << Simulator::Now() << " end " << Simulator::Now() + varTtiPeriod);
     return varTtiPeriod;
 }
 
 Time
-NrGnbPhy::DlData(const std::shared_ptr<DciInfoElementTdma> &dci) {
+NrGnbPhy::DlData(const std::shared_ptr<DciInfoElementTdma>& dci)
+{
     NS_LOG_FUNCTION(this);
     NS_LOG_DEBUG("Starting DL DATA TTI at symbol " << +m_currSymStart << " to "
                                                    << +m_currSymStart + dci->m_numSym << " for "
@@ -1248,19 +1395,20 @@ NrGnbPhy::DlData(const std::shared_ptr<DciInfoElementTdma> &dci) {
 
     Time varTtiPeriod = GetSymbolPeriod() * dci->m_numSym;
 
-    Ptr <PacketBurst> pktBurst = GetPacketBurst(m_currentSlot, dci->m_symStart, dci->m_rnti);
+    Ptr<PacketBurst> pktBurst = GetPacketBurst(m_currentSlot, dci->m_symStart, dci->m_rnti);
 
-    if (!pktBurst || pktBurst->GetNPackets() == 0) {
+    if (!pktBurst || pktBurst->GetNPackets() == 0)
+    {
         // sometimes the UE will be scheduled when no data is queued.
         // In this case, don't send anything, don't put power... do nothing!
         return varTtiPeriod;
     }
 
     NS_LOG_INFO("gNB TXing DL DATA frame "
-                        << m_currentSlot << " symbols " << static_cast<uint32_t>(dci->m_symStart) << "-"
-                        << static_cast<uint32_t>(dci->m_symStart + dci->m_numSym - 1) << " start "
-                        << Simulator::Now() + NanoSeconds(1) << " end "
-                        << Simulator::Now() + varTtiPeriod - NanoSeconds(2.0));
+                << m_currentSlot << " symbols " << static_cast<uint32_t>(dci->m_symStart) << "-"
+                << static_cast<uint32_t>(dci->m_symStart + dci->m_numSym - 1) << " start "
+                << Simulator::Now() + NanoSeconds(1) << " end "
+                << Simulator::Now() + varTtiPeriod - NanoSeconds(2.0));
 
     Simulator::Schedule(NanoSeconds(1.0),
                         &NrGnbPhy::SendDataChannels,
@@ -1273,7 +1421,8 @@ NrGnbPhy::DlData(const std::shared_ptr<DciInfoElementTdma> &dci) {
 }
 
 Time
-NrGnbPhy::UlData(const std::shared_ptr<DciInfoElementTdma> &dci) {
+NrGnbPhy::UlData(const std::shared_ptr<DciInfoElementTdma>& dci)
+{
     NS_LOG_FUNCTION(this);
 
     NS_LOG_DEBUG("Starting UL DATA TTI at symbol " << +m_currSymStart << " to "
@@ -1295,10 +1444,12 @@ NrGnbPhy::UlData(const std::shared_ptr<DciInfoElementTdma> &dci) {
                                   m_currentSlot});
 
     bool found = false;
-    for (auto &i: m_deviceMap) {
-        Ptr <NrUeNetDevice> ueDev = DynamicCast<NrUeNetDevice>(i);
+    for (auto& i : m_deviceMap)
+    {
+        Ptr<NrUeNetDevice> ueDev = DynamicCast<NrUeNetDevice>(i);
         uint64_t ueRnti = (DynamicCast<NrUePhy>(ueDev->GetPhy(GetBwpId())))->GetRnti();
-        if (dci->m_rnti == ueRnti) {
+        if (dci->m_rnti == ueRnti)
+        {
             // Even if we change the beamforming vector, we hope that the scheduler
             // has scheduled UEs within the same beam (and, therefore, have the same
             // beamforming vector)
@@ -1309,29 +1460,33 @@ NrGnbPhy::UlData(const std::shared_ptr<DciInfoElementTdma> &dci) {
     }
     // In case UE was not attached via NrHelper::AttachToGnb(),
     // assume quasi omni beamforming until we have the opportunity to scan for a beam
-    if (!found) {
+    if (!found)
+    {
         ChangeBeamformingVector(nullptr);
     }
 
     NS_LOG_INFO("GNB RXing UL DATA frame "
-                        << m_currentSlot << " symbols " << static_cast<uint32_t>(dci->m_symStart) << "-"
-                        << static_cast<uint32_t>(dci->m_symStart + dci->m_numSym - 1) << " start "
-                        << Simulator::Now() << " end " << Simulator::Now() + varTtiPeriod);
+                << m_currentSlot << " symbols " << static_cast<uint32_t>(dci->m_symStart) << "-"
+                << static_cast<uint32_t>(dci->m_symStart + dci->m_numSym - 1) << " start "
+                << Simulator::Now() << " end " << Simulator::Now() + varTtiPeriod);
     return varTtiPeriod;
 }
 
 void
-NrGnbPhy::ChangeBeamformingVector(Ptr <NrNetDevice> dev) {
+NrGnbPhy::ChangeBeamformingVector(Ptr<NrNetDevice> dev)
+{
     m_spectrumPhy->GetBeamManager()->ChangeBeamformingVector(dev);
 }
 
 void
-NrGnbPhy::ChangeToQuasiOmniBeamformingVector() {
+NrGnbPhy::ChangeToQuasiOmniBeamformingVector()
+{
     m_spectrumPhy->GetBeamManager()->ChangeToQuasiOmniBeamformingVector();
 }
 
 Time
-NrGnbPhy::UlSrs(const std::shared_ptr<DciInfoElementTdma> &dci) {
+NrGnbPhy::UlSrs(const std::shared_ptr<DciInfoElementTdma>& dci)
+{
     NS_LOG_FUNCTION(this);
 
     NS_LOG_DEBUG("Starting UL SRS TTI at symbol " << +m_currSymStart << " to "
@@ -1345,10 +1500,12 @@ NrGnbPhy::UlSrs(const std::shared_ptr<DciInfoElementTdma> &dci) {
 
     // if yes, and the rnti for the current SRS is not found in the list,
     // the code will not abort
-    for (auto &i: m_deviceMap) {
-        Ptr <NrUeNetDevice> ueDev = DynamicCast<NrUeNetDevice>(i);
+    for (auto& i : m_deviceMap)
+    {
+        Ptr<NrUeNetDevice> ueDev = DynamicCast<NrUeNetDevice>(i);
         uint64_t ueRnti = (DynamicCast<NrUePhy>(ueDev->GetPhy(0)))->GetRnti();
-        if (dci->m_rnti == ueRnti) {
+        if (dci->m_rnti == ueRnti)
+        {
             // Even if we change the beamforming vector, we hope that the scheduler
             // has scheduled UEs within the same beam (and, therefore, have the same
             // beamforming vector)
@@ -1360,40 +1517,53 @@ NrGnbPhy::UlSrs(const std::shared_ptr<DciInfoElementTdma> &dci) {
 
     // In case UE was not attached via NrHelper::AttachToGnb(),
     // assume quasi omni beamforming until we have the opportunity to scan for a beam
-    if (!found) {
+    if (!found)
+    {
         ChangeBeamformingVector(nullptr);
         NS_LOG_WARN("The UE for which is scheduled this SRS does not have yet initialized RNTI. "
                     "RAR message was not received yet.");
     }
 
     NS_LOG_INFO("GNB RXing UL SRS frame "
-                        << m_currentSlot << " symbols " << static_cast<uint32_t>(dci->m_symStart) << "-"
-                        << static_cast<uint32_t>(dci->m_symStart + dci->m_numSym - 1) << " start "
-                        << Simulator::Now() << " end " << Simulator::Now() + varTtiPeriod);
+                << m_currentSlot << " symbols " << static_cast<uint32_t>(dci->m_symStart) << "-"
+                << static_cast<uint32_t>(dci->m_symStart + dci->m_numSym - 1) << " start "
+                << Simulator::Now() << " end " << Simulator::Now() + varTtiPeriod);
     return varTtiPeriod;
 }
 
 void
-NrGnbPhy::StartVarTti(const std::shared_ptr<DciInfoElementTdma> &dci) {
+NrGnbPhy::StartVarTti(const std::shared_ptr<DciInfoElementTdma>& dci)
+{
     NS_LOG_FUNCTION(this);
     ChangeToQuasiOmniBeamformingVector(); // assume the control signal is omni
     m_currSymStart = dci->m_symStart;
 
     Time varTtiPeriod;
 
-    if (dci->m_type == DciInfoElementTdma::CTRL) {
-        if (dci->m_format == DciInfoElementTdma::DL) {
+    if (dci->m_type == DciInfoElementTdma::CTRL)
+    {
+        if (dci->m_format == DciInfoElementTdma::DL)
+        {
             varTtiPeriod = DlCtrl(dci);
-        } else if (dci->m_format == DciInfoElementTdma::UL) {
+        }
+        else if (dci->m_format == DciInfoElementTdma::UL)
+        {
             varTtiPeriod = UlCtrl(dci);
         }
-    } else if (dci->m_type == DciInfoElementTdma::DATA || dci->m_type == DciInfoElementTdma::MSG3) {
-        if (dci->m_format == DciInfoElementTdma::DL) {
+    }
+    else if (dci->m_type == DciInfoElementTdma::DATA || dci->m_type == DciInfoElementTdma::MSG3)
+    {
+        if (dci->m_format == DciInfoElementTdma::DL)
+        {
             varTtiPeriod = DlData(dci);
-        } else if (dci->m_format == DciInfoElementTdma::UL) {
+        }
+        else if (dci->m_format == DciInfoElementTdma::UL)
+        {
             varTtiPeriod = UlData(dci);
         }
-    } else if (dci->m_type == DciInfoElementTdma::SRS) {
+    }
+    else if (dci->m_type == DciInfoElementTdma::SRS)
+    {
         NS_ASSERT(dci->m_format == DciInfoElementTdma::UL);
         varTtiPeriod = UlSrs(dci);
     }
@@ -1402,21 +1572,24 @@ NrGnbPhy::StartVarTti(const std::shared_ptr<DciInfoElementTdma> &dci) {
 }
 
 void
-NrGnbPhy::EndVarTti(const std::shared_ptr<DciInfoElementTdma> &lastDci) {
+NrGnbPhy::EndVarTti(const std::shared_ptr<DciInfoElementTdma>& lastDci)
+{
     NS_LOG_FUNCTION(this << Simulator::Now().GetSeconds());
 
     NS_LOG_DEBUG("DCI started at symbol "
-                         << static_cast<uint32_t>(lastDci->m_symStart) << " which lasted for "
-                         << static_cast<uint32_t>(lastDci->m_numSym) << " symbols finished");
+                 << static_cast<uint32_t>(lastDci->m_symStart) << " which lasted for "
+                 << static_cast<uint32_t>(lastDci->m_numSym) << " symbols finished");
 }
 
 void
-NrGnbPhy::EndSlot() {
+NrGnbPhy::EndSlot()
+{
     NS_LOG_FUNCTION(this);
 
     Time slotStart = m_lastSlotStart + GetSlotPeriod() - Simulator::Now();
 
-    if (m_channelStatus == TO_LOSE) {
+    if (m_channelStatus == TO_LOSE)
+    {
         NS_LOG_INFO("Release the channel because we did not have any data to maintain the grant");
         m_channelStatus = NONE;
         m_channelLostTimer.Cancel();
@@ -1424,7 +1597,8 @@ NrGnbPhy::EndSlot() {
 
     NS_LOG_DEBUG("Slot started at " << m_lastSlotStart << " ended");
 
-    if (m_nrFhPhySapProvider) {
+    if (m_nrFhPhySapProvider)
+    {
         NS_LOG_DEBUG("End slot notified from PHY"); // TODO: Add active UEs nad BWPs?
         m_nrFhPhySapProvider->NotifyEndSlot(GetBwpId(), m_currentSlot);
     }
@@ -1434,23 +1608,27 @@ NrGnbPhy::EndSlot() {
 }
 
 void
-NrGnbPhy::SendDataChannels(const Ptr <PacketBurst> &pb,
-                           const Time &varTtiPeriod,
-                           const std::shared_ptr<DciInfoElementTdma> &dci) {
+NrGnbPhy::SendDataChannels(const Ptr<PacketBurst>& pb,
+                           const Time& varTtiPeriod,
+                           const std::shared_ptr<DciInfoElementTdma>& dci)
+{
     NS_LOG_FUNCTION(this);
     // update beamforming vectors (currently supports 1 user only)
 
     // In each time instance, there can only be a single BF vector. Only update BF vectors once
     // unless time has changed
-    if (Simulator::Now() > m_lastBfChange) {
+    if (Simulator::Now() > m_lastBfChange)
+    {
         NS_ASSERT_MSG(!m_spectrumPhy->IsTransmitting(),
                       "Cannot change analog BF after TX has started");
         m_lastBfChange = Simulator::Now();
         bool found = false;
-        for (auto &i: m_deviceMap) {
-            Ptr <NrUeNetDevice> ueDev = DynamicCast<NrUeNetDevice>(i);
+        for (auto& i : m_deviceMap)
+        {
+            Ptr<NrUeNetDevice> ueDev = DynamicCast<NrUeNetDevice>(i);
             uint64_t ueRnti = (DynamicCast<NrUePhy>(ueDev->GetPhy(GetBwpId())))->GetRnti();
-            if (dci->m_rnti == ueRnti) {
+            if (dci->m_rnti == ueRnti)
+            {
                 ChangeBeamformingVector(i);
                 found = true;
                 break;
@@ -1458,7 +1636,8 @@ NrGnbPhy::SendDataChannels(const Ptr <PacketBurst> &pb,
         }
         // In case UE was not attached via NrHelper::AttachToGnb(),
         // assume quasi omni beamforming until we have the opportunity to scan for a beam
-        if (!found) {
+        if (!found)
+        {
             ChangeBeamformingVector(nullptr);
         }
     }
@@ -1469,21 +1648,22 @@ NrGnbPhy::SendDataChannels(const Ptr <PacketBurst> &pb,
     // invoked only when the symStart changes.
     NS_ASSERT(m_rbgAllocationPerSym.find(dci->m_symStart) != m_rbgAllocationPerSym.end());
     auto nTotalAllocRbs =
-            FromRBGBitmaskToRBAssignment(m_rbgAllocationPerSym.at(dci->m_symStart)).size();
+        FromRBGBitmaskToRBAssignment(m_rbgAllocationPerSym.at(dci->m_symStart)).size();
     SetSubChannels(FromRBGBitmaskToRBAssignment(dci->m_rbgBitmask), nTotalAllocRbs);
 
-    std::list<Ptr < NrControlMessage>>
-    ctrlMsgs;
+    std::list<Ptr<NrControlMessage>> ctrlMsgs;
     m_spectrumPhy->StartTxDataFrames(pb, ctrlMsgs, dci, varTtiPeriod);
 }
 
 void
-NrGnbPhy::SendCtrlChannels(const Time &varTtiPeriod) {
+NrGnbPhy::SendCtrlChannels(const Time& varTtiPeriod)
+{
     NS_LOG_FUNCTION(this << "Send Ctrl");
 
     std::vector<int> fullBwRb(GetRbNum());
     // The first time set the right values for the phy
-    for (uint32_t i = 0; i < fullBwRb.size(); ++i) {
+    for (uint32_t i = 0; i < fullBwRb.size(); ++i)
+    {
         fullBwRb[i] = static_cast<int>(i);
     }
 
@@ -1493,15 +1673,17 @@ NrGnbPhy::SendCtrlChannels(const Time &varTtiPeriod) {
     SetSubChannels(fullBwRb, fullBwRb.size());
 
     if (m_nrFhPhySapProvider &&
-        m_nrFhPhySapProvider->GetFhControlMethod() == NrFhControl::FhControlMethod::Dropping) {
-        std::vector<Ptr < NrControlMessage>>
-        fhCtrlMsgs(m_ctrlMsgs.begin(), m_ctrlMsgs.end());
+        m_nrFhPhySapProvider->GetFhControlMethod() == NrFhControl::FhControlMethod::Dropping)
+    {
+        std::vector<Ptr<NrControlMessage>> fhCtrlMsgs(m_ctrlMsgs.begin(), m_ctrlMsgs.end());
         auto rng = std::default_random_engine{};
         std::shuffle(std::begin(fhCtrlMsgs), std::end(fhCtrlMsgs), rng);
 
-        for (auto ctrlIt = fhCtrlMsgs.begin(); ctrlIt != fhCtrlMsgs.end(); /* no incr */) {
-            Ptr <NrControlMessage> msg = (*ctrlIt);
-            if (msg->GetMessageType() == NrControlMessage::DL_DCI) {
+        for (auto ctrlIt = fhCtrlMsgs.begin(); ctrlIt != fhCtrlMsgs.end(); /* no incr */)
+        {
+            Ptr<NrControlMessage> msg = (*ctrlIt);
+            if (msg->GetMessageType() == NrControlMessage::DL_DCI)
+            {
                 auto dciMsg = DynamicCast<NrDlDciMessage>(msg);
                 auto dciInfoElem = dciMsg->GetDciInfoElement();
                 long rbgAssigned = std::count(dciInfoElem->m_rbgBitmask.begin(),
@@ -1511,11 +1693,14 @@ NrGnbPhy::SendCtrlChannels(const Time &varTtiPeriod) {
                 if (DoesFhAllocationFit(GetBwpId(),
                                         dciInfoElem->m_mcs,
                                         rbgAssigned * dciInfoElem->m_numSym,
-                                        dciInfoElem->m_rank) == 0) {
+                                        dciInfoElem->m_rank) == 0)
+                {
                     // drop DL DCI because data does not fit in available FH BW
                     ctrlIt = fhCtrlMsgs.erase(ctrlIt);
                     m_ctrlMsgs.remove(msg);
-                } else {
+                }
+                else
+                {
                     ++ctrlIt;
                     m_nrFhPhySapProvider->UpdateTracesBasedOnDroppedData(GetBwpId(),
                                                                          dciInfoElem->m_mcs,
@@ -1523,38 +1708,48 @@ NrGnbPhy::SendCtrlChannels(const Time &varTtiPeriod) {
                                                                          dciInfoElem->m_numSym,
                                                                          dciInfoElem->m_rank);
                 }
-            } else {
+            }
+            else
+            {
                 ++ctrlIt;
             }
         }
-        if (!m_ctrlMsgs.empty()) {
+        if (!m_ctrlMsgs.empty())
+        {
             m_spectrumPhy->StartTxDlControlFrames(m_ctrlMsgs, varTtiPeriod);
         }
         m_ctrlMsgs.clear();
-    } else {
+    }
+    else
+    {
         m_spectrumPhy->StartTxDlControlFrames(m_ctrlMsgs, varTtiPeriod);
         m_ctrlMsgs.clear();
     }
 }
 
 bool
-NrGnbPhy::RegisterUe(uint64_t imsi, const Ptr <NrUeNetDevice> &ueDevice) {
+NrGnbPhy::RegisterUe(uint64_t imsi, const Ptr<NrUeNetDevice>& ueDevice)
+{
     NS_LOG_FUNCTION(this << imsi);
     std::set<uint64_t>::iterator it;
     it = m_ueAttached.find(imsi);
 
-    if (it == m_ueAttached.end()) {
+    if (it == m_ueAttached.end())
+    {
         m_ueAttached.insert(imsi);
         m_deviceMap.push_back(ueDevice);
         return (true);
-    } else {
+    }
+    else
+    {
         NS_LOG_ERROR("Programming error...UE already attached");
         return (false);
     }
 }
 
 void
-NrGnbPhy::PhyDataPacketReceived(const Ptr <Packet> &p) {
+NrGnbPhy::PhyDataPacketReceived(const Ptr<Packet>& p)
+{
     Simulator::ScheduleWithContext(m_netDevice->GetNode()->GetId(),
                                    GetTbDecodeLatency(),
                                    &NrGnbPhySapUser::ReceivePhyPdu,
@@ -1563,20 +1758,22 @@ NrGnbPhy::PhyDataPacketReceived(const Ptr <Packet> &p) {
 }
 
 void
-NrGnbPhy::GenerateDataCqiReport(const SpectrumValue &sinr) {
+NrGnbPhy::GenerateDataCqiReport(const SpectrumValue& sinr)
+{
     NS_LOG_FUNCTION(this << sinr);
 
     Values::const_iterator it;
     NrMacSchedSapProvider::SchedUlCqiInfoReqParameters ulcqi;
     ulcqi.m_ulCqi.m_type = UlCqiInfo::PUSCH;
-    for (it = sinr.ConstValuesBegin(); it != sinr.ConstValuesEnd(); it++) {
+    for (it = sinr.ConstValuesBegin(); it != sinr.ConstValuesEnd(); it++)
+    {
         //   double sinrdb = 10 * std::log10 ((*it));
         //       NS_LOG_INFO ("ULCQI RB " << i << " value " << sinrdb);
         // convert from double to fixed point notaltion Sxxxxxxxxxxx.xxx
         //   int16_t sinrFp = nr::FfConverter::double2fpS11dot3 (sinrdb);
         ulcqi.m_ulCqi.m_sinr.push_back(
-                *it); // will be processed by NrMacSchedulerCQIManagement::UlSBCQIReported, it will look
-        // into a map of assignment
+            *it); // will be processed by NrMacSchedulerCQIManagement::UlSBCQIReported, it will look
+                  // into a map of assignment
     }
 
     // here we use the start symbol index of the var tti in place of the var tti index because the
@@ -1589,35 +1786,44 @@ NrGnbPhy::GenerateDataCqiReport(const SpectrumValue &sinr) {
 }
 
 void
-NrGnbPhy::PhyCtrlMessagesReceived(const Ptr <NrControlMessage> &msg) {
+NrGnbPhy::PhyCtrlMessagesReceived(const Ptr<NrControlMessage>& msg)
+{
     NS_LOG_FUNCTION(this);
 
-    if (msg->GetMessageType() == NrControlMessage::DL_CQI) {
-        Ptr <NrDlCqiMessage> dlcqi = DynamicCast<NrDlCqiMessage>(msg);
+    if (msg->GetMessageType() == NrControlMessage::DL_CQI)
+    {
+        Ptr<NrDlCqiMessage> dlcqi = DynamicCast<NrDlCqiMessage>(msg);
         DlCqiInfo dlcqiLE = dlcqi->GetDlCqi();
         m_phyRxedCtrlMsgsTrace(m_currentSlot, GetCellId(), dlcqiLE.m_rnti, GetBwpId(), msg);
 
         NS_LOG_INFO("Received DL_CQI for RNTI: " << dlcqiLE.m_rnti << " in slot " << m_currentSlot);
 
         m_phySapUser->ReceiveControlMessage(msg);
-    } else if (msg->GetMessageType() == NrControlMessage::RACH_PREAMBLE) {
+    }
+    else if (msg->GetMessageType() == NrControlMessage::RACH_PREAMBLE)
+    {
         NS_LOG_INFO("received RACH_PREAMBLE");
 
-        Ptr <NrRachPreambleMessage> rachPreamble = DynamicCast<NrRachPreambleMessage>(msg);
+        Ptr<NrRachPreambleMessage> rachPreamble = DynamicCast<NrRachPreambleMessage>(msg);
         m_phyRxedCtrlMsgsTrace(m_currentSlot, GetCellId(), 0, GetBwpId(), msg);
         NS_LOG_INFO("Received RACH Preamble in slot " << m_currentSlot);
         m_phySapUser->ReceiveRachPreamble(rachPreamble->GetRapId());
-    } else if (msg->GetMessageType() == NrControlMessage::DL_HARQ) {
-        Ptr <NrDlHarqFeedbackMessage> dlharqMsg = DynamicCast<NrDlHarqFeedbackMessage>(msg);
+    }
+    else if (msg->GetMessageType() == NrControlMessage::DL_HARQ)
+    {
+        Ptr<NrDlHarqFeedbackMessage> dlharqMsg = DynamicCast<NrDlHarqFeedbackMessage>(msg);
         DlHarqInfo dlharq = dlharqMsg->GetDlHarqFeedback();
-        if (m_ueAttachedRnti.find(dlharq.m_rnti) != m_ueAttachedRnti.end()) {
+        if (m_ueAttachedRnti.find(dlharq.m_rnti) != m_ueAttachedRnti.end())
+        {
             m_phyRxedCtrlMsgsTrace(m_currentSlot, GetCellId(), dlharq.m_rnti, GetBwpId(), msg);
 
             NS_LOG_INFO("Received DL_HARQ for RNTI: " << dlharq.m_rnti << " in slot "
                                                       << m_currentSlot);
             m_phySapUser->ReceiveControlMessage(msg);
         }
-    } else {
+    }
+    else
+    {
         m_phyRxedCtrlMsgsTrace(m_currentSlot, GetCellId(), 0, GetBwpId(), msg);
         m_phySapUser->ReceiveControlMessage(msg);
     }
@@ -1628,82 +1834,99 @@ NrGnbPhy::PhyCtrlMessagesReceived(const Ptr <NrControlMessage> &msg) {
 ///////////////////////////////////////////////////////////
 
 void
-NrGnbPhy::DoSetBandwidth(uint16_t ulBandwidth, uint16_t dlBandwidth) {
+NrGnbPhy::DoSetBandwidth(uint16_t ulBandwidth, uint16_t dlBandwidth)
+{
     NS_LOG_FUNCTION(this << +ulBandwidth << +dlBandwidth);
     NS_ASSERT(ulBandwidth == dlBandwidth);
     SetChannelBandwidth(dlBandwidth);
 }
 
 void
-NrGnbPhy::DoSetEarfcn(uint16_t ulEarfcn, uint16_t dlEarfcn) {
+NrGnbPhy::DoSetEarfcn(uint16_t ulEarfcn, uint16_t dlEarfcn)
+{
     NS_LOG_FUNCTION(this << ulEarfcn << dlEarfcn);
 }
 
 void
-NrGnbPhy::DoAddUe([[maybe_unused]] uint16_t rnti) {
+NrGnbPhy::DoAddUe([[maybe_unused]] uint16_t rnti)
+{
     NS_LOG_FUNCTION(this << rnti);
     std::set<uint16_t>::iterator it;
     it = m_ueAttachedRnti.find(rnti);
-    if (it == m_ueAttachedRnti.end()) {
+    if (it == m_ueAttachedRnti.end())
+    {
         m_ueAttachedRnti.insert(rnti);
     }
 }
 
 void
-NrGnbPhy::DoRemoveUe(uint16_t rnti) {
+NrGnbPhy::DoRemoveUe(uint16_t rnti)
+{
     NS_LOG_FUNCTION(this << rnti);
 
     std::set<uint16_t>::iterator it = m_ueAttachedRnti.find(rnti);
-    if (it != m_ueAttachedRnti.end()) {
+    if (it != m_ueAttachedRnti.end())
+    {
         m_ueAttachedRnti.erase(it);
-    } else {
+    }
+    else
+    {
         NS_FATAL_ERROR("Impossible to remove UE, not attached!");
     }
 }
 
 void
-NrGnbPhy::DoSetPa(uint16_t rnti, double pa) {
+NrGnbPhy::DoSetPa(uint16_t rnti, double pa)
+{
     NS_LOG_FUNCTION(this << rnti << pa);
 }
 
 void
-NrGnbPhy::DoSetTransmissionMode(uint16_t rnti, uint8_t txMode) {
+NrGnbPhy::DoSetTransmissionMode(uint16_t rnti, uint8_t txMode)
+{
     NS_LOG_FUNCTION(this << rnti << +txMode);
     // UL supports only SISO MODE
 }
 
 void
-NrGnbPhy::DoSetSrsConfigurationIndex(uint16_t rnti, uint16_t srcCi) {
+NrGnbPhy::DoSetSrsConfigurationIndex(uint16_t rnti, uint16_t srcCi)
+{
     NS_LOG_FUNCTION(this << rnti << srcCi);
 }
 
 void
-NrGnbPhy::DoSetMasterInformationBlock([[maybe_unused]] NrRrcSap::MasterInformationBlock mib) {
+NrGnbPhy::DoSetMasterInformationBlock([[maybe_unused]] NrRrcSap::MasterInformationBlock mib)
+{
     NS_LOG_FUNCTION(this);
 }
 
 void
-NrGnbPhy::DoSetSystemInformationBlockType1(NrRrcSap::SystemInformationBlockType1 sib1) {
+NrGnbPhy::DoSetSystemInformationBlockType1(NrRrcSap::SystemInformationBlockType1 sib1)
+{
     NS_LOG_FUNCTION(this);
     m_sib1 = sib1;
 }
 
 int8_t
-NrGnbPhy::DoGetReferenceSignalPower() const {
+NrGnbPhy::DoGetReferenceSignalPower() const
+{
     NS_LOG_FUNCTION(this);
     return static_cast<int8_t>(m_txPower);
 }
 
 void
-NrGnbPhy::SetPhySapUser(NrGnbPhySapUser *ptr) {
+NrGnbPhy::SetPhySapUser(NrGnbPhySapUser* ptr)
+{
     m_phySapUser = ptr;
 }
 
 void
-NrGnbPhy::ReportUlHarqFeedback(const UlHarqInfo &mes) {
+NrGnbPhy::ReportUlHarqFeedback(const UlHarqInfo& mes)
+{
     NS_LOG_FUNCTION(this);
     // forward to scheduler
-    if (m_ueAttachedRnti.find(mes.m_rnti) != m_ueAttachedRnti.end()) {
+    if (m_ueAttachedRnti.find(mes.m_rnti) != m_ueAttachedRnti.end())
+    {
         NS_LOG_INFO("Received UL HARQ feedback " << mes.IsReceivedOk()
                                                  << " and forwarding to the scheduler");
         m_phySapUser->UlHarqFeedback(mes);
@@ -1711,14 +1934,15 @@ NrGnbPhy::ReportUlHarqFeedback(const UlHarqInfo &mes) {
 }
 
 void
-NrGnbPhy::SetPattern(const std::string &pattern) {
+NrGnbPhy::SetPattern(const std::string& pattern)
+{
     NS_LOG_FUNCTION(this);
 
     static std::unordered_map<std::string, LteNrTddSlotType> lookupTable = {
-            {"DL", LteNrTddSlotType::DL},
-            {"UL", LteNrTddSlotType::UL},
-            {"S",  LteNrTddSlotType::S},
-            {"F",  LteNrTddSlotType::F},
+        {"DL", LteNrTddSlotType::DL},
+        {"UL", LteNrTddSlotType::UL},
+        {"S", LteNrTddSlotType::S},
+        {"F", LteNrTddSlotType::F},
     };
 
     std::vector<LteNrTddSlotType> vector;
@@ -1726,12 +1950,15 @@ NrGnbPhy::SetPattern(const std::string &pattern) {
     std::string token;
     std::vector<std::string> extracted;
 
-    while (std::getline(ss, token, '|')) {
+    while (std::getline(ss, token, '|'))
+    {
         extracted.push_back(token);
     }
 
-    for (const auto &v: extracted) {
-        if (lookupTable.find(v) == lookupTable.end()) {
+    for (const auto& v : extracted)
+    {
+        if (lookupTable.find(v) == lookupTable.end())
+        {
             NS_FATAL_ERROR("Pattern type " << v << " not valid. Valid values are: DL UL F S");
         }
         vector.push_back(lookupTable[v]);
@@ -1741,21 +1968,25 @@ NrGnbPhy::SetPattern(const std::string &pattern) {
 }
 
 std::string
-NrGnbPhy::GetPattern() const {
+NrGnbPhy::GetPattern() const
+{
     return NrPhy::GetPattern(m_tddPattern);
 }
 
 void
-NrGnbPhy::SetPrimary() {
+NrGnbPhy::SetPrimary()
+{
     NS_LOG_FUNCTION(this);
     m_isPrimary = true;
 }
 
 void
-NrGnbPhy::ChannelAccessGranted(const Time &time) {
+NrGnbPhy::ChannelAccessGranted(const Time& time)
+{
     NS_LOG_FUNCTION(this);
 
-    if (time < GetSlotPeriod()) {
+    if (time < GetSlotPeriod())
+    {
         NS_LOG_INFO("Channel granted for less than the slot time. Ignoring the grant.");
         m_channelStatus = NONE;
         return;
@@ -1772,7 +2003,8 @@ NrGnbPhy::ChannelAccessGranted(const Time &time) {
                                               << ". We lost " << toNextSlot);
     NS_ASSERT(!m_channelLostTimer.IsPending());
 
-    if (slotGranted < 1) {
+    if (slotGranted < 1)
+    {
         slotGranted = 1;
     }
     m_channelLostTimer = Simulator::Schedule(GetSlotPeriod() * slotGranted - NanoSeconds(1),
@@ -1781,7 +2013,8 @@ NrGnbPhy::ChannelAccessGranted(const Time &time) {
 }
 
 void
-NrGnbPhy::ChannelAccessLost() {
+NrGnbPhy::ChannelAccessLost()
+{
     NS_LOG_FUNCTION(this);
     NS_LOG_INFO("Channel access lost");
     m_channelStatus = NONE;
