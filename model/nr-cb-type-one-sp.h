@@ -54,6 +54,30 @@ class NrCbTypeOneSp : public NrCbTypeOne
     /// @note if i13 is not defined and there is no secondary beam (e.g., in rank 1), this returns 1
     size_t GetNumI13() const;
 
+    /**
+     * \brief Set port power allocation from a string
+     * \param powerStr String in format "0.5,0.5" representing port power values
+     */
+    void SetPortPowerString(const std::string& powerStr);
+
+    /**
+     * \brief Set per-port power allocation (linear scale)
+     * \param powerVec Vector where powerVec[i] is the power ratio (0.0-1.0) for port i
+     */
+    void SetPortPower(const std::vector<double>& powerVec)  ;
+
+    /**
+     * \brief Get current port power allocation
+     * \return Const reference to power allocation vector
+     */
+    const std::vector<double>& GetPortPower() const  ;
+
+    /**
+     * \brief Check if power allocation is supported
+     * \return true if power allocation is supported
+     */
+    bool IsPowerAllocationActive() const;
+
   protected:
     /// @brief Init the number of i11 indices (horizontal beams)
     void InitNumI11();
@@ -192,6 +216,9 @@ class NrCbTypeOneSp : public NrCbTypeOne
 
     std::vector<size_t> m_uniqueBfvInds; ///< For each column in W, the beamforming vector index
     std::vector<double> m_signPhiN;      ///< For each column in W, the sign before phi_n
+
+    private:
+    std::vector<double> m_portpower{}; ///< Power allocation for each port (linear scale)
 };
 
 } // namespace ns3
