@@ -153,7 +153,15 @@ class NrGnbNetDevice : public NrNetDevice
         double prbUsagePercentage = 0; // PRB usage percentage
         double averageLastRb= 0;    // Store the average value of the last RBG
     };
-    void KPI_tracker();
+    struct UEStats {
+        uint64_t IMSI = 0;
+        double SINR = 0;
+        double RSRP= 0;
+    };
+
+    void Cell_KPI_tracker();
+
+    void UE_KPI_tracker();
 
   protected:
     void DoInitialize() override;

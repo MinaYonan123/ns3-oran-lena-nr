@@ -255,6 +255,12 @@ NrUePhy::GetRsrp() const
     return m_rsrp;
 }
 
+double
+NrUePhy::GetSINR() const
+{
+    return m_sinr_current;
+}
+
 Ptr<NrUePowerControl>
 NrUePhy::GetUplinkPowerControl() const
 {
@@ -1195,6 +1201,7 @@ NrUePhy::GenerateDlCqiReport(const SpectrumValue& sinr)
     if (m_ulConfigured && (m_rnti > 0) && m_receptionEnabled)
     {
         m_dlDataSinrTrace(GetCellId(), m_rnti, ComputeAvgSinr(sinr), GetBwpId());
+        m_sinr_current = ComputeAvgSinr(sinr);
 
         if (Simulator::Now() > m_wbCqiLast)
         {
@@ -1468,6 +1475,7 @@ NrUePhy::ReportDlCtrlSinr(const SpectrumValue& sinr)
 
     NS_ASSERT(rbUsed);
     m_dlCtrlSinrTrace(GetCellId(), m_rnti, sinrSum / rbUsed, GetBwpId());
+    //m_sinr_current = sinrSum / rbUsed;
 }
 
 uint8_t
@@ -1836,5 +1844,6 @@ NrUePhy::GetPmSearch() const
 {
     return m_pmSearch;
 }
+
 
 } // namespace ns3

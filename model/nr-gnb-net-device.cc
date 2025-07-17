@@ -5,20 +5,23 @@
 #include "nr-gnb-net-device.h"
 
 #include "bandwidth-part-gnb.h"
+//#include "bandwidth-part-ue.h"
 #include "bwp-manager-gnb.h"
 #include "nr-gnb-component-carrier-manager.h"
 #include "nr-gnb-mac.h"
 #include "nr-gnb-phy.h"
 #include "nr-gnb-rrc.h"
+#include "nr-ue-net-device.h"
+#include "nr-ue-phy.h"
 
 #include <ns3/abort.h>
 #include <ns3/ipv4-l3-protocol.h>
 #include <ns3/ipv6-l3-protocol.h>
 #include <ns3/log.h>
+#include <ns3/node-list.h>
+#include <ns3/node.h>
 #include <ns3/object-map.h>
 #include <ns3/pointer.h>
-#include "encode_e2apv1.hpp"
-#include <ns3/double.h>
 
 namespace ns3
 {
@@ -26,6 +29,8 @@ namespace ns3
 NS_LOG_COMPONENT_DEFINE("NrGnbNetDevice");
 
 NS_OBJECT_ENSURE_REGISTERED(NrGnbNetDevice);
+
+
 
 TypeId
 NrGnbNetDevice::GetTypeId()
@@ -49,35 +54,40 @@ NrGnbNetDevice::GetTypeId()
                           PointerValue(),
                           MakePointerAccessor(&NrGnbNetDevice::m_rrc),
                           MakePointerChecker<NrGnbRrc>())
-            .AddAttribute ("CellId",
+            .AddAttribute("CellId",
                           "Cell Identifier",
-                          UintegerValue (0),
-                          MakeUintegerAccessor (&NrGnbNetDevice::m_cellId),
-                          MakeUintegerChecker<uint16_t> ())
-            .AddAttribute ("E2Termination",
+                          UintegerValue(0),
+                          MakeUintegerAccessor(&NrGnbNetDevice::m_cellId),
+                          MakeUintegerChecker<uint16_t>())
+            .AddAttribute("E2Termination",
                           "The E2 termination object associated to this node",
-                          PointerValue (),
-                          MakePointerAccessor (&NrGnbNetDevice::SetE2Termination,
+                          PointerValue(),
+                          MakePointerAccessor(&NrGnbNetDevice::SetE2Termination,
                                               &NrGnbNetDevice::GetE2Termination),
-                          MakePointerChecker <E2Termination> ())
-            .AddAttribute ("EnableE2FileLogging",
+                          MakePointerChecker<E2Termination>())
+            .AddAttribute("EnableE2FileLogging",
                           "If true, force E2 indication generation and write E2 fields in csv file",
-                          BooleanValue (false),
-                          MakeBooleanAccessor (&NrGnbNetDevice::m_forceE2FileLogging),
-                          MakeBooleanChecker ())
-            .AddAttribute ("KPM_E2functionID", "Function ID to subscribe", DoubleValue (2),
-                          MakeDoubleAccessor (&NrGnbNetDevice::e2_func_id),
-                          MakeDoubleChecker<double> ())
-            .AddAttribute("RC_E2functionID", "Function ID to subscribe", DoubleValue(3),
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&NrGnbNetDevice::m_forceE2FileLogging),
+                          MakeBooleanChecker())
+            .AddAttribute("KPM_E2functionID",
+                          "Function ID to subscribe",
+                          DoubleValue(2),
+                          MakeDoubleAccessor(&NrGnbNetDevice::e2_func_id),
+                          MakeDoubleChecker<double>())
+            .AddAttribute("RC_E2functionID",
+                          "Function ID to subscribe",
+                          DoubleValue(3),
                           MakeDoubleAccessor(&NrGnbNetDevice::rc_e2_func_id),
                           MakeDoubleChecker<double>());
     return tid;
 }
 
 NrGnbNetDevice::NrGnbNetDevice()
-    : m_forceE2FileLogging (false),m_cellId(0),
+    : m_forceE2FileLogging(false),
+      m_cellId(0),
       m_stopSendingMessages(false),
-      m_isReportingEnabled (false)
+      m_isReportingEnabled(false)
 {
     NS_LOG_FUNCTION(this);
 }
@@ -107,42 +117,42 @@ NrGnbNetDevice::GetCcMapSize() const
     return static_cast<uint32_t>(m_ccMap.size());
 }
 
-
-void NrGnbNetDevice::stopSendingAndCancelSchedule() {
+void
+NrGnbNetDevice::stopSendingAndCancelSchedule()
+{
     m_stopSendingMessages = true;
 }
 
-
 void
-NrGnbNetDevice::KpmSubscriptionCallback (E2AP_PDU_t* sub_req_pdu)
+NrGnbNetDevice::KpmSubscriptionCallback(E2AP_PDU_t* sub_req_pdu)
 {
-    NS_LOG_DEBUG ("\nReceived RIC Subscription Request, cellId= " << m_cellId << "\n");
+    NS_LOG_DEBUG("\nReceived RIC Subscription Request, cellId= " << m_cellId << "\n");
 
-    E2Termination::RicSubscriptionRequest_rval_s params = m_e2term->ProcessRicSubscriptionRequest (sub_req_pdu);
-    NS_LOG_DEBUG ("requestorId " << +params.requestorId <<
-                 ", instanceId " << +params.instanceId <<
-                 ", ranFuncionId " << +params.ranFuncionId <<
-                 ", actionId " << +params.actionId);
+    E2Termination::RicSubscriptionRequest_rval_s params =
+        m_e2term->ProcessRicSubscriptionRequest(sub_req_pdu);
+    NS_LOG_DEBUG("requestorId " << +params.requestorId << ", instanceId " << +params.instanceId
+                                << ", ranFuncionId " << +params.ranFuncionId << ", actionId "
+                                << +params.actionId);
 
     if (!m_stopSendingMessages && !m_isReportingEnabled && !m_forceE2FileLogging)
     {
-        //BuildAndSendReportMessage (params);
+        // BuildAndSendReportMessage (params);
         m_isReportingEnabled = true;
     }
-
 }
-
 
 void
-NrGnbNetDevice::ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu) {
-    NS_LOG_DEBUG("\n\nLteEnbNetDevice::ControlMessageReceivedCallback: Received RIC Control Message");
+NrGnbNetDevice::ControlMessageReceivedCallback(E2AP_PDU_t* sub_req_pdu)
+{
+    NS_LOG_DEBUG(
+        "\n\nLteEnbNetDevice::ControlMessageReceivedCallback: Received RIC Control Message");
 
     // Create RIC Control ACK
-    Ptr <RicControlMessage> controlMessage = Create<RicControlMessage>(sub_req_pdu);
+    Ptr<RicControlMessage> controlMessage = Create<RicControlMessage>(sub_req_pdu);
     NS_LOG_INFO("After RicControlMessage::RicControlMessage constructor");
     NS_LOG_INFO("Request type " << controlMessage->m_requestType);
-
 }
+
 void
 NrGnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
 {
@@ -150,19 +160,26 @@ NrGnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
 
     NS_LOG_DEBUG("Register E2SM NR");
 
-    if (!m_forceE2FileLogging) {
-        long m_e2_func_id = long (e2_func_id);
+    if (!m_forceE2FileLogging)
+    {
+        long m_e2_func_id = long(e2_func_id);
         long m_rc_e2_func_id = long(rc_e2_func_id);
-        Ptr<KpmFunctionDescription> kpmFd = Create<KpmFunctionDescription> ();
-        e2term->RegisterKpmCallbackToE2Sm (
-            m_e2_func_id, kpmFd,std::bind (&NrGnbNetDevice::KpmSubscriptionCallback, this, std::placeholders::_1));
+        Ptr<KpmFunctionDescription> kpmFd = Create<KpmFunctionDescription>();
+        e2term->RegisterKpmCallbackToE2Sm(
+            m_e2_func_id,
+            kpmFd,
+            std::bind(&NrGnbNetDevice::KpmSubscriptionCallback, this, std::placeholders::_1));
 
-        Ptr <RicControlFunctionDescription> ricCtrlFd = Create<RicControlFunctionDescription>();
-        e2term->RegisterSmCallbackToE2Sm(m_rc_e2_func_id, ricCtrlFd,
+        Ptr<RicControlFunctionDescription> ricCtrlFd = Create<RicControlFunctionDescription>();
+        e2term->RegisterSmCallbackToE2Sm(m_rc_e2_func_id,
+                                         ricCtrlFd,
                                          std::bind(&NrGnbNetDevice::ControlMessageReceivedCallback,
-                                                   this, std::placeholders::_1));
+                                                   this,
+                                                   std::placeholders::_1));
 
-        e2term->RegisterCallbackFunctionToE2Sm(1, std::bind(&NrGnbNetDevice::stopSendingAndCancelSchedule, this));
+        e2term->RegisterCallbackFunctionToE2Sm(
+            1,
+            std::bind(&NrGnbNetDevice::stopSendingAndCancelSchedule, this));
     }
 }
 
@@ -222,48 +239,43 @@ NrGnbNetDevice::RouteOutgoingCtrlMsgs(const std::list<Ptr<NrControlMessage>>& ms
 }
 
 void
-NrGnbNetDevice::DoInitialize() {
+NrGnbNetDevice::DoInitialize()
+{
     NS_LOG_FUNCTION(this);
     m_rrc->Initialize();
-    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::KPI_tracker, this);
+    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::Cell_KPI_tracker, this);
+    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::UE_KPI_tracker, this);
     NrNetDevice::DoInitialize();
-
 }
 
-void NrGnbNetDevice::KPI_tracker() {
-
+void NrGnbNetDevice::Cell_KPI_tracker()
+{
     Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
-
     NrGnbPhy::RbStats stats = gnbPhy->GetRBStats();
 
-    // Initialize CellStats structure
-    CellStats cellStats = {0};
+    // Fill CellStats structure
+    CellStats cellStats;
     cellStats.cellId = stats.cellId;
 
-    // Check for valid PRB usage percentage
-    if (std::isnan(stats.prbUsagePercentage) || stats.prbUsagePercentage < 0.0)
-    {
-        cellStats.prbUsagePercentage = 0.0; // Default to 0 if invalid
-    }
-    else
-    {
-        cellStats.prbUsagePercentage = stats.prbUsagePercentage;
-    }
+    // Set PRB usage percentage (validate NaN and negative)
+    cellStats.prbUsagePercentage = (std::isnan(stats.prbUsagePercentage) || stats.prbUsagePercentage < 0.0)
+                                       ? 0.0
+                                       : stats.prbUsagePercentage;
 
-    // Check for valid averageLastRb
-    if (std::isnan(stats.averageLastRb) || stats.averageLastRb < 0.0)
-    {
-        cellStats.averageLastRb = 0.0; // Default to 0 if invalid
-    }
-    else
-    {
-        cellStats.averageLastRb = stats.averageLastRb;
-    }
+    // Set averageLastRb (validate NaN and negative)
+    cellStats.averageLastRb = (std::isnan(stats.averageLastRb) || stats.averageLastRb < 0.0)
+                                  ? 0.0
+                                  : stats.averageLastRb;
 
+    // Print struct contents
+    std::cout << "----- Cell KPI Stats -----\n";
+    std::cout << "Cell ID: " << cellStats.cellId << "\n";
+    std::cout << "PRB Usage Percentage: " << cellStats.prbUsagePercentage << "%\n";
+    std::cout << "Average Last RB: " << cellStats.averageLastRb << "\n";
+    std::cout << "--------------------------\n";
 
-    std::cout<< "Cell ID: " << cellStats.cellId <<" PRB usage:"<<cellStats.prbUsagePercentage <<", PRB last:"<<cellStats.averageLastRb << std::endl;
-
-    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::KPI_tracker, this);
+    // Reschedule KPI_tracker every 100 ms
+    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::Cell_KPI_tracker, this);
 }
 
 
@@ -388,11 +400,12 @@ NrGnbNetDevice::UpdateConfig()
     m_rrc->ConfigureCell(ccPhyConfMap);
     if (m_e2term)
     {
-        NS_LOG_DEBUG ("E2sim start in cell " << m_cellId << " force CSV logging "
+        NS_LOG_DEBUG("E2sim start in cell " << m_cellId << " force CSV logging "
                                             << m_forceE2FileLogging);
         //
-        if(!m_forceE2FileLogging) {
-            Simulator::Schedule (MicroSeconds (0), &E2Termination::Start, m_e2term);
+        if (!m_forceE2FileLogging)
+        {
+            Simulator::Schedule(MicroSeconds(0), &E2Termination::Start, m_e2term);
         }
     }
 }
@@ -464,5 +477,58 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
     }
     return 0;
 }
+
+void
+NrGnbNetDevice::UE_KPI_tracker()
+{
+    std::unordered_map<uint64_t, UEStats> ueStatsMap;
+    //std::vector<Ptr<NrUeNetDevice>> ueDevices;
+
+    // Iterate once through all nodes to find matching UE devices
+    for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it)
+    {
+        Ptr<Node> node = *it;
+        for (uint32_t i = 0; i < node->GetNDevices(); ++i)
+        {
+            Ptr<NrUeNetDevice> ueDevice = node->GetDevice(i)->GetObject<NrUeNetDevice>();
+            if (!ueDevice)
+                continue;
+            uint64_t imsi = ueDevice->GetImsi();
+           // NS_LOG_UNCOND("IMSIx: " << imsi);
+            if (ueDevice->GetCellId() == this->GetCellId())
+            {
+                //NS_LOG_UNCOND("Found for gnb " << this->GetCellId() << " connected UE in cell "
+                                               //<< ueDevice->GetCellId() << " with IMSI: " << imsi);
+
+                Ptr<NrUePhy> uePhy = ueDevice->GetPhy(0);
+
+                if (uePhy)
+                {
+                    uePhy->ReportUeMeasurements();
+                    double rsrp = uePhy->GetRsrp();
+                    double sinr = uePhy->GetSINR();
+                    double sinr_dB = 10 * log10(sinr);
+                    //NS_LOG_UNCOND("-> gNB " << this->GetCellId() << " : UE IMSI "
+                   //                         << ueDevice->GetImsi()
+                                     //       << " reports RSRP (CC 0): " << rsrp << " dBm" << " SINR: " << sinr_dB << " dBm");
+                    UEStats& stats = ueStatsMap[imsi];
+                    stats.IMSI = imsi;
+                    stats.SINR = sinr_dB;
+                    stats.RSRP = rsrp;
+                }
+            }
+        }
+    }
+
+    for (const auto& pair : ueStatsMap) {
+        std::cout << "IMSI: " << pair.second.IMSI
+                  << ", SINR: " << pair.second.SINR
+                  << ", RSRP: " << pair.second.RSRP << std::endl;
+    }
+
+    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::UE_KPI_tracker, this);
+   // return ueDevices;
+}
+
 
 } // namespace ns3
