@@ -1683,7 +1683,6 @@ NrHelper::DoAssignStreamsToChannelObjects(Ptr<NrSpectrumPhy> phy, int64_t curren
     Ptr<ThreeGppSpectrumPropagationLossModel> spectrumLossModel =
         DynamicCast<ThreeGppSpectrumPropagationLossModel>(
             phy->GetSpectrumChannel()->GetPhasedArraySpectrumPropagationLossModel());
-
     if (spectrumLossModel)
     {
         if (std::find(m_channelObjectsWithAssignedStreams.begin(),
