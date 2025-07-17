@@ -9,9 +9,16 @@
 #include <ns3/log.h>
 #include <ns3/math.h>
 #include <ns3/nr-spectrum-value-helper.h>
+#include <ns3/string.h>
 #include <ns3/uinteger.h>
-
+#include <ns3/simulator.h> // Added to use Simulator::Now()
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <cmath>
 #include <complex.h>
+#include <sstream>
+
 
 namespace ns3
 {
@@ -44,7 +51,12 @@ TypeId
 NrCbTypeOneSp::GetTypeId()
 {
     static TypeId tid =
-        TypeId("ns3::NrCbTypeOneSp").SetParent<NrCbTypeOne>().AddConstructor<NrCbTypeOneSp>();
+        TypeId("ns3::NrCbTypeOneSp").SetParent<NrCbTypeOne>().AddConstructor<NrCbTypeOneSp>()
+        .AddAttribute("PortPower", 
+                     "Power allocation for each port (must sum to approximately 1.0)",
+                     StringValue(""),
+                     MakeStringAccessor(&NrCbTypeOneSp::SetPortPowerString),
+                     MakeStringChecker());
     return tid;
 }
 
@@ -57,12 +69,45 @@ NrCbTypeOneSp::Init()
 
     m_o1 = (m_n1 > 1) ? 4 : 1;
     m_o2 = (m_n2 > 1) ? 4 : 1;
+    
+    // Save the old number of ports before recalculating
+    size_t oldNPorts = m_nPorts;
+    
+    // Calculate the new number of ports
     m_nPorts = (m_isDualPol) ? 2 * m_n1 * m_n2 : m_n1 * m_n2;
+    
+    NS_LOG_INFO("Initializing codebook: n1=" << m_n1 << ", n2=" << m_n2 
+                << ", isDualPol=" << m_isDualPol << ", ports=" << m_nPorts);
 
     NS_ASSERT_MSG(m_nPorts > 0, "Number of CSI-RS ports must not be 0");
     NS_ASSERT_MSG(m_isDualPol || (m_nPorts <= 2),
                   "For > 2 antenna ports, dual polarization is required");
     NS_ASSERT_MSG(m_nPorts <= 32, "Number of CSI-RS ports must not be greater than 32");
+    
+    // If the number of ports has changed and we have stored port power values
+    if (oldNPorts != m_nPorts && !m_portpower.empty())
+    {
+        NS_LOG_INFO("Number of ports changed from " << oldNPorts << " to " << m_nPorts 
+                    << ". Adjusting port power vector.");
+                    
+        // If port power vector size doesn't match the new port count, resize it
+        if (m_portpower.size() != m_nPorts)
+        {
+            // If we have fewer power values than ports, duplicate the last value
+            if (m_portpower.size() < m_nPorts)
+            {
+                double lastValue = m_portpower.back();
+                m_portpower.resize(m_nPorts, lastValue);
+            }
+            // If we have more power values than ports, truncate
+            else
+            {
+                m_portpower.resize(m_nPorts);
+            }
+            
+            NS_LOG_INFO("Adjusted port power vector size to " << m_portpower.size());
+        }
+    }
 
     InitNumI11();
     InitNumI12();
@@ -81,6 +126,122 @@ NrCbTypeOneSp::GetBasePrecMat(size_t i1, size_t i2) const
     return GetBasePrecMatFromIndex(i11, i12, i13, i2);
 }
 
+void NrCbTypeOneSp::SetPortPowerString(const std::string& powerStr)
+{
+    NS_LOG_FUNCTION(this);
+    
+    if (powerStr.empty())
+    {
+        return; // Use default values
+    }
+    
+    std::vector<double> powerVec;
+    std::stringstream ss(powerStr);
+    std::string token;
+    
+    while (std::getline(ss, token, ',')) 
+    {
+        // Convert token to double and add to vector
+        try 
+        {
+            double value = std::stod(token);
+            powerVec.push_back(value);
+        } 
+        catch (const std::exception& e) 
+        {
+            NS_LOG_ERROR("Error parsing port power value: " << token);
+        }
+    }
+    
+    if (!powerVec.empty()) 
+    {
+        // If codebook is not properly initialized yet, just store the values
+        // and they'll be used when m_nPorts is properly set
+        if (m_nPorts <= 1)
+        {
+            NS_LOG_INFO("Codebook not fully initialized yet (nPorts=" << m_nPorts 
+                        << "). Storing port power for later.");
+            m_portpower = powerVec;
+        }
+        else
+        {
+            // Normal case when codebook is properly initialized
+            SetPortPower(powerVec);
+        }
+    }
+}
+
+void NrCbTypeOneSp::SetPortPower(const std::vector<double>& powerVec)
+{
+    NS_LOG_FUNCTION(this);
+    NS_LOG_INFO("Setting port power: vector size=" << powerVec.size() 
+                << ", nPorts=" << m_nPorts);
+    
+    if (powerVec.size() != m_nPorts)
+    {
+        NS_LOG_WARN("Power vector size (" << powerVec.size() 
+                    << ") doesn't match number of ports (" << m_nPorts << ")");
+        
+        if (m_nPorts <= 1)
+        {
+            NS_LOG_INFO("Codebook not fully initialized yet. Storing port power for later use.");
+            m_portpower = powerVec;
+            return;
+        }
+        
+        // Create a new vector with the correct size
+        std::vector<double> adjustedVec;
+        adjustedVec.reserve(m_nPorts);
+        
+        // Copy as many values as we can from the input vector
+        for (size_t i = 0; i < std::min(powerVec.size(), m_nPorts); ++i)
+        {
+            adjustedVec.push_back(powerVec[i]);
+        }
+        
+        // If we need more values, duplicate the last one
+        if (adjustedVec.size() < m_nPorts && !powerVec.empty())
+        {
+            double lastValue = powerVec.back();
+            while (adjustedVec.size() < m_nPorts)
+            {
+                adjustedVec.push_back(lastValue);
+            }
+        }
+        
+        // Store the adjusted vector
+        m_portpower = adjustedVec;
+        NS_LOG_INFO("Adjusted port power vector to size " << m_portpower.size());
+    }
+    else
+    {
+        // Normal case - vector size matches port count
+        for (auto it = powerVec.begin(); it != powerVec.end(); it++)
+        {
+            NS_ASSERT_MSG(*it >= 0.0, "Power allocation must be positive");
+        }
+        m_portpower = powerVec;
+    }
+
+    // Log the configuration
+    NS_LOG_INFO("Port power allocation updated:");
+    for (size_t i = 0; i < m_portpower.size(); ++i)
+    {
+        NS_LOG_INFO("  Port " << i << ": " << m_portpower[i]);
+    }
+}
+
+const std::vector<double>& NrCbTypeOneSp::GetPortPower() const
+{
+    return m_portpower;
+}
+// making sure that all the power allocation sums to 1.0
+bool NrCbTypeOneSp::IsPowerAllocationActive() const
+{
+    return !m_portpower.empty() && 
+          !std::all_of(m_portpower.begin(), m_portpower.end(),
+                      [](double p) { return p == 1.0; });
+}
 ComplexMatrixArray
 NrCbTypeOneSp::GetBasePrecMatFromIndex(size_t i11, size_t i12, size_t i13, size_t i2) const
 {
@@ -97,19 +258,93 @@ NrCbTypeOneSp::GetBasePrecMatFromIndex(size_t i11, size_t i12, size_t i13, size_
     auto phiN = std::complex<double>{cos(phase), sin(phase)}; // phi_n as defined in 5.2.2.2.1
     auto normalizer = 1.0 / sqrt(m_nPorts * m_rank);
     auto uniqueBfvs = CreateUniqueBfvs(i11, i12, i13);
+    // Quick inline solution
+//     std::cout << "uniqueBfvs contents:\n";
+//     for (size_t i = 0; i < uniqueBfvs.size(); ++i) {
+//         for (size_t j = 0; j < uniqueBfvs[i].size(); ++j) {
+//             std::cout << "(" << uniqueBfvs[i][j].real() << "," << uniqueBfvs[i][j].imag() << ") ";
+//         }
+//     std::cout << "\n";
+// }
     for (size_t layer = 0; layer < m_rank; layer++)
     {
         // The beamforming vector for the first polarization
         auto v = uniqueBfvs[m_uniqueBfvInds[layer]];
+        
         NS_ASSERT_MSG(v.size() == m_nPorts / 2,
                       "Size of a per-polarization beamforming vector must be nPorts/2");
         for (size_t vIdx = 0; vIdx < v.size(); vIdx++)
         {
             // Fill in the precoding matrix W for both the first and second polarization
-            precMat(vIdx, layer) = normalizer * v[vIdx];
-            precMat(vIdx + v.size(), layer) = normalizer * m_signPhiN[layer] * phiN * v[vIdx];
+            // Apply port power scaling if power allocation is active
+            if (IsPowerAllocationActive())
+            {
+                // First polarization
+                precMat(vIdx, layer) =  normalizer *   v[vIdx]*(m_portpower[vIdx]);
+                // Second polarization
+                precMat(vIdx + v.size(), layer) =   normalizer *   m_signPhiN[layer] * phiN * v[vIdx] 
+                                                * (m_portpower[vIdx + v.size()]);
+            }
+            else
+            {
+                // Use original values without port power scaling
+                precMat(vIdx, layer) = normalizer *  v[vIdx];
+                precMat(vIdx + v.size(), layer) = normalizer * m_signPhiN[layer] * phiN * v[vIdx];
+            }
         }
+
     }
+    // double totalPower = 0.0;
+    // std::cout << "\n=== Precoding Matrix at time " << Simulator::Now().GetSeconds() << " s ===\n";
+    // std::cout << "Precoding Matrix Entries (magnitude):\n";
+    // for (size_t port = 0; port < m_nPorts; ++port)
+    // {
+    //     std::cout << "Port " << port << ": ";
+    //     for (size_t layer = 0; layer < m_rank; ++layer)
+    //     {
+    //         double magnitude = std::abs(precMat(port, layer));
+    //         std::cout << magnitude << " ";
+    //         totalPower += std::norm(precMat(port, layer)); // |w|^2
+    //     }
+    //     std::cout << "\n";
+    //     std::cout << "this is the total power " << totalPower << std::endl;
+    // }
+    
+    // // Compute power scale and effective power
+    // double expectedPower = m_nPorts * m_rank; // If all entries were unit magnitude
+    // double powerScale = totalPower / expectedPower;
+    // double configuredTxPowerDbm = 30.0; // Assumed from your simulation
+    // double effectiveTxPowerDbm = configuredTxPowerDbm + 10 * std::log10(powerScale);
+    // double effectiveTxPowerWatts = std::pow(10.0, (effectiveTxPowerDbm - 30.0) / 10.0);
+    
+    // // Display results
+    // std::cout << "Total Power (sum of |w|^2): " << totalPower << "\n";
+    // std::cout << "Expected Power (nPorts * nRank): " << expectedPower << "\n";
+    // std::cout << "Power Scale: " << powerScale << "\n";
+    // std::cout << "Configured TX Power: " << configuredTxPowerDbm << " dBm\n";
+    // std::cout << "Effective TX Power: " << effectiveTxPowerDbm << " dBm (" << effectiveTxPowerWatts << " W)\n";
+    // if (effectiveTxPowerDbm < configuredTxPowerDbm)
+    // {
+    //     std::cout << "Power reduction achieved: " << (configuredTxPowerDbm - effectiveTxPowerDbm) << " dB\n";
+    // }
+    // else
+    // {
+    //     std::cout << "Warning: No power reduction observed!\n";
+    // }
+    
+    // // Write to CSV file
+    // static bool headerWritten = false;
+    // std::ofstream csvFile("power_data1000.csv", std::ios::app); // Open in append mode
+    // if (!headerWritten)
+    // {
+    //     csvFile << "Timestamp,EffectivePower_dBm,EffectivePower_W\n"; // Write header once
+    //     headerWritten = true;
+    // }
+    // csvFile << std::fixed << std::setprecision(6) << Simulator::Now().GetSeconds() << "," 
+    //         << effectiveTxPowerDbm << "," << effectiveTxPowerWatts << "\n"; // Write data
+
+    // std::cout<< precMat << "this is the precoding matrix " << std::endl;
+
     return precMat;
 }
 
