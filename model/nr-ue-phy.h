@@ -132,9 +132,10 @@ class NrUePhy : public NrPhy
      */
 
     double GetSINR() const;
-
-
     double GetRsrp() const;
+    double GetDLTP();
+    Ptr<NrDlCqiMessage> GetMIMOkpi() const;
+
 
     /**
      * \brief Get NR uplink power control entity
@@ -869,6 +870,8 @@ class NrUePhy : public NrPhy
     TracedCallback<uint16_t, uint16_t, double, uint16_t> m_dlCtrlSinrTrace;
     TracedCallback<uint64_t, uint64_t> m_reportUlTbSize; //!< Report the UL TBS
     TracedCallback<uint64_t, uint64_t> m_reportDlTbSize; //!< Report the DL TBS
+
+
     TracedCallback<const SfnSf&,
                    Ptr<const SpectrumValue>,
                    const Time&,
@@ -952,7 +955,13 @@ class NrUePhy : public NrPhy
     double m_sinrDbFrame;           ///< the average SINR per radio frame
     SpectrumValue m_ctrlSinrForRlf; ///< the CTRL SINR used for RLF detection
     bool m_enableRlfDetection;      ///< Flag to enable/disable RLF detection
-    double m_sinr_current;
+    double m_sinr_current; //for KPI tracking
+    double m_dl_tp;//for KPI tracking
+
+    std::vector<std::pair<double, uint64_t>> g_dlTbSizeForOneUe; //report for TP calculation
+    uint64_t t_last_TP_DL;//time for catching last TP calculation timestamp
+    mutable Ptr<NrDlCqiMessage> m_lastDlCqiMessage;  // Store last generated message
+
 };
 
 } // namespace ns3

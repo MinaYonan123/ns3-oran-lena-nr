@@ -153,10 +153,16 @@ class NrGnbNetDevice : public NrNetDevice
         double prbUsagePercentage = 0; // PRB usage percentage
         double averageLastRb= 0;    // Store the average value of the last RBG
     };
+
     struct UEStats {
-        uint64_t IMSI = 0;
-        double SINR = 0;
-        double RSRP= 0;
+        uint64_t IMSI;
+        double SINR;
+        double RSRP;
+        double dl_tp;
+        bool MIMO_enabled = false;
+        uint8_t mcs;
+        uint8_t ri;
+        uint8_t cqi;
     };
 
     void Cell_KPI_tracker();
@@ -182,6 +188,8 @@ class NrGnbNetDevice : public NrNetDevice
     Ptr<E2Termination> m_e2term;
     double  rc_e2_func_id ; // to RC
     double e2_func_id; //to pass kpm function id
+    uint64_t sim_id;
+
     bool m_stopSendingMessages;
     bool m_isReportingEnabled;
 };

@@ -46,6 +46,7 @@ NrUePhy::NrUePhy()
     m_powerControl = CreateObject<NrUePowerControl>(this);
     m_isConnected = false;
     Simulator::Schedule(m_ueMeasurementsFilterPeriod, &NrUePhy::ReportUeMeasurements, this);
+    t_last_TP_DL =  Simulator::Now().GetSeconds();
 }
 
 NrUePhy::~NrUePhy()
@@ -259,6 +260,30 @@ double
 NrUePhy::GetSINR() const
 {
     return m_sinr_current;
+}
+
+double NrUePhy::GetDLTP()
+{
+    double windowDuration = Simulator::Now().GetSeconds() - t_last_TP_DL;
+    double windowStart = t_last_TP_DL;
+
+    uint64_t totalBytes = 0;
+    for (auto &tb : g_dlTbSizeForOneUe) {
+        if (tb.first >= windowStart) {
+            totalBytes += tb.second;
+        }
+    }
+    double throughput = (totalBytes * 8.0) / (windowDuration * 1e6); // Mbps
+
+    // Clear the vector after calculating throughput
+    g_dlTbSizeForOneUe.clear();
+
+    return throughput;
+}
+
+Ptr<NrDlCqiMessage> NrUePhy::GetMIMOkpi() const
+{
+    return m_lastDlCqiMessage;
 }
 
 Ptr<NrUePowerControl>
@@ -1003,7 +1028,12 @@ NrUePhy::DlData(const std::shared_ptr<DciInfoElementTdma>& dci)
                                   dci->m_symStart,
                                   dci->m_numSym,
                                   m_currentSlot});
+    double now = Simulator::Now().GetSeconds(); // get current time
+    uint64_t tbSize = dci->m_tbSize; // or whatever tbSize you want to store
+
     m_reportDlTbSize(m_netDevice->GetObject<NrUeNetDevice>()->GetImsi(), dci->m_tbSize);
+    g_dlTbSizeForOneUe.push_back(std::make_pair(now, tbSize)); // store the data
+
     NS_LOG_INFO("UE" << m_rnti << " RXing DL DATA frame for symbols " << +dci->m_symStart << "-"
                      << +(dci->m_symStart + dci->m_numSym - 1) << " num of rbg assigned: "
                      << FromRBGBitmaskToRBAssignment(dci->m_rbgBitmask).size()
@@ -1804,6 +1834,8 @@ NrUePhy::GenerateDlCqiReportMimo(const std::vector<MimoSignalChunk>& mimoChunks)
     auto msg = Create<NrDlCqiMessage>();
     msg->SetSourceBwp(GetBwpId());
     msg->SetDlCqi(dlcqi);
+
+    m_lastDlCqiMessage = msg;  // store for later access
 
     DoSendControlMessage(msg);
 }
