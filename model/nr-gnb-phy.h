@@ -92,16 +92,14 @@ class NrGnbPhy : public NrPhy
     friend class NrMemberPhySapProvider;
 
   public:
-    //struct for nr-gnb-net-device KPI exchange
-    struct RbStats {
-        uint16_t cellId = 0;         // Cell ID
-        double prbUsagePercentage = 0; // PRB usage percentage
-        double averageLastRb= 0;    // Store the average value of the last RBG
-        int iterations = 0;
+    /**
+     * @brief CSI-RS model to be used
+     */
+    enum CsiRsModel
+    {
+        CSI_RS_PER_UE,  //!< CSI-RS per UE periodically
+        CSI_RS_PER_BEAM //!< CSI-RS per beam periodically
     };
-
-    RbStats GetRBStats();
-
 
     /**
          * \brief Get Type id
@@ -423,6 +421,16 @@ class NrGnbPhy : public NrPhy
      * TODO change to private and add documentation
      */
     void ChangeToQuasiOmniBeamformingVector();
+
+
+    struct RbStats {
+      uint16_t cellId = 0;         // Cell ID
+      double prbUsagePercentage = 0; // PRB usage percentage
+      double averageLastRb= 0;    // Store the average value of the last RBG
+      int iterations = 0;
+    };
+
+    RbStats GetRBStats();
 
   protected:
     /**
@@ -845,8 +853,7 @@ class NrGnbPhy : public NrPhy
 
     Time m_lastBfChange; //!< Saves the timestamp when the beamforming vector changes.
 
-    RbStats m_RbStats; // store RBStats
-    //double m_available_prb = 0;
+    mutable RbStats m_RbStats; // store RBStats
 };
 
 } // namespace ns3

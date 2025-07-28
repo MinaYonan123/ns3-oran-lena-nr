@@ -503,7 +503,7 @@ NrGnbPhy::StartEventLoop(uint16_t frame, uint8_t subframe, uint16_t slot)
                  << "\t Channel central freq: " << GetCentralFrequency() << " Hz" << std::endl
                  << "\t Num. RB: " << GetRbNum());
     SfnSf startSlot(frame, subframe, slot, GetNumerology());
-    std::cout<< "Available PRB for Cell " << GetCellId() << ": " << GetRbNum()<< std::endl;
+    std::cout << "Available PRB for Cell " << GetCellId() << ": " << GetRbNum() << std::endl;
     InitializeMessageList();
     StartSlot(startSlot);
 }
@@ -987,22 +987,53 @@ NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo& allocInfo) const
                   "Allocated " << +allocInfo.m_numSymAlloc << " but only " << symUsed
                                << " written in stats");
 
-    m_phySlotDataStats(allocInfo.m_sfnSf,
-                       activeUe.size(),
-                       dataReg,
-                       dataSym,
-                       availRb,
-                       GetSymbolsPerSlot() - ctrlSym,
-                       GetBwpId(),
-                       GetCellId());
-    m_phySlotCtrlStats(allocInfo.m_sfnSf,
-                       activeUe.size(),
-                       ctrlReg,
-                       ctrlSym,
-                       availRb,
-                       GetSymbolsPerSlot() - dataSym,
-                       GetBwpId(),
-                       GetCellId());
+  m_phySlotDataStats(allocInfo.m_sfnSf, activeUe.size(), dataReg, dataSym,
+                     availRb, GetSymbolsPerSlot() - ctrlSym, GetBwpId(),
+                     GetCellId());
+
+  m_phySlotCtrlStats(allocInfo.m_sfnSf, activeUe.size(), ctrlReg, ctrlSym,
+                     availRb, GetSymbolsPerSlot() - dataSym, GetBwpId(),
+                     GetCellId());
+
+  uint32_t totalSymbols = GetSymbolsPerSlot();
+  uint32_t totalRePerRb = GetNumRbPerRbg() * totalSymbols;
+
+  double dataRb = static_cast<double>(dataReg) / totalRePerRb;
+  double ctrlRb = static_cast<double>(ctrlReg) / totalRePerRb;
+
+  double totalPrbUsage = dataRb + ctrlRb;
+
+  double tmp_usage = totalPrbUsage/availRb * 100;
+  // Update metrics
+  RbStats rbStats = {0};
+  rbStats.prbUsagePercentage += tmp_usage;
+  rbStats.averageLastRb += totalPrbUsage;
+  rbStats.iterations = rbStats.iterations + 1;
+
+  m_RbStats = rbStats;
+  // NS_LOG_UNCOND("PRB_Usage(%)=" <<
+  // rbStats.prbUsagePercentage/rbStats.iterations);
+
+/*   NS_LOG_UNCOND("DataSlotStats: "
+                 << "CellId=" << GetCellId()
+                 << ", SfnSf=" << allocInfo.m_sfnSf
+                 << ", ActiveUe=" << activeUe.size()
+                 << ", UsedRE=" << dataReg
+                 << ", UsedSymbols=" << dataSym
+                 << ", AvailRB=" << availRb
+                 << ", AvailSymbols=" << GetSymbolsPerSlot() - ctrlSym
+                 << ", BwpId=" << GetBwpId()
+                 << ", PRB_Usage(%)=" << static_cast<uint32_t>(tmp_usage));*/
+
+  /* NS_LOG_UNCOND("DataSlotStats: " << "CellId=" << GetCellId()
+                                   << ", PRB_Usage(%)="
+                                   << rbStats.prbUsagePercentage<< ",
+     PRB_last="<< rbStats.averageLastRb);*/
+
+  // rbStats.prbUsagePercentage = ctrlSym / availRb * 100;
+  // NS_LOG_UNCOND("Ctrl PRB: " << GetCellId() << "," << ctrlSym << "," <<
+  // availRb
+  //                        << "," << rbStats.prbUsagePercentage);
 }
 
 void
@@ -1068,72 +1099,26 @@ NrGnbPhy::PrepareRbgAllocationMap(const std::deque<VarTtiAllocInfo>& allocations
                        FromRBGBitmaskToRBAssignment(rbgAllocation),
                        GetBwpId(),
                        GetCellId());
-
-
-        // Define total available PRBs
-        const uint16_t totalAvailablePrbs = GetRbNum();
-
-        // Calculate PRB usage percentage
-        double prbUsagePercentage = 0.0;
-        if (!FromRBGBitmaskToRBAssignment(rbgAllocation).empty()) {
-            prbUsagePercentage =
-                (static_cast<double>(FromRBGBitmaskToRBAssignment(rbgAllocation).size()) / totalAvailablePrbs) *
-                100.0;
-        }
-
-        // Get the last RB from rbMap or fallback to -1 if rbMap is empty
-        int  lastRb = 0;
-        lastRb = FromRBGBitmaskToRBAssignment(rbgAllocation).empty() ? -1 : FromRBGBitmaskToRBAssignment(
-                                                                                rbgAllocation).back();
-        RbStats rbStats= {0};
-        // rbStats.cellId = GetCellId();       // GetCellId() handles returning Cell ID,
-        rbStats.iterations = rbStats.iterations + 1;
-        if (std::isnan(prbUsagePercentage))
-        {
-            prbUsagePercentage = 0.0; // Set to default value if NaN
-        }
-        rbStats.prbUsagePercentage = prbUsagePercentage + rbStats.prbUsagePercentage;
-
-        if (std::isnan(static_cast<double>(lastRb)))
-        {
-            lastRb = 0; // Set to default value if NaN
-        }
-        rbStats.averageLastRb = lastRb + rbStats.averageLastRb;
-
-        m_RbStats = rbStats;
-        //std::cout << "store new values for RB Stats" << prbUsagePercentage << " , " << lastRb << std::endl;
     }
 
     m_rbgAllocationPerSymDataStat.clear();
 }
 
-NrGnbPhy::RbStats
-NrGnbPhy::GetRBStats() {
+NrGnbPhy::RbStats NrGnbPhy::GetRBStats() {
 
-    RbStats rbStats_temp = {0};
+  RbStats rbStats_temp = {0};
 
+  rbStats_temp.cellId = m_RbStats.cellId;
+  rbStats_temp.prbUsagePercentage =
+      m_RbStats.prbUsagePercentage / m_RbStats.iterations;
+  rbStats_temp.averageLastRb = m_RbStats.averageLastRb / m_RbStats.iterations;
+  // NS_LOG_UNCOND("PRB_Usage(%)=" << rbStats_temp.prbUsagePercentage);
 
-    if (std::isnan(m_RbStats.prbUsagePercentage))
-    {
-        rbStats_temp.prbUsagePercentage = 0.0; // Set to default value if NaN
-    } else {
-        rbStats_temp.prbUsagePercentage = m_RbStats.prbUsagePercentage / m_RbStats.iterations;
-    }
+  m_RbStats.prbUsagePercentage = 0;
+  m_RbStats.averageLastRb = 0;
+  m_RbStats.iterations = 0;
 
-    if (std::isnan(static_cast<double>(m_RbStats.averageLastRb)))
-    {
-        rbStats_temp.averageLastRb = 0; // Set to default value if NaN
-    } else {
-        rbStats_temp.averageLastRb = m_RbStats.averageLastRb / m_RbStats.iterations;
-    }
-
-    rbStats_temp.cellId = GetCellId();
-
-    m_RbStats.prbUsagePercentage = 0;
-    m_RbStats.averageLastRb = 0;
-    m_RbStats.iterations = 0;
-
-    return rbStats_temp;
+  return rbStats_temp;
 }
 
 void

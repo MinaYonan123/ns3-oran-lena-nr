@@ -836,6 +836,7 @@ class NrUePhy : public NrPhy
     uint8_t m_ulCtrlSyms{1}; //!< Number of CTRL symbols in UL
 
     double m_rsrp{0}; //!< The latest measured RSRP value
+    double m_avg_rsrp = 0;
 
     /// Summary results of measuring a specific cell. Used for layer-1 filtering.
     struct UeMeasurementsElement
@@ -959,7 +960,7 @@ class NrUePhy : public NrPhy
     double m_dl_tp;//for KPI tracking
 
     std::vector<std::pair<double, uint64_t>> g_dlTbSizeForOneUe; //report for TP calculation
-    uint64_t t_last_TP_DL;//time for catching last TP calculation timestamp
+    uint64_t t_last_TP_DL=0;//time for catching last TP calculation timestamp
     mutable Ptr<NrDlCqiMessage> m_lastDlCqiMessage;  // Store last generated message
 
 };

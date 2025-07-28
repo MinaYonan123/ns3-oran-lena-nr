@@ -8,6 +8,7 @@
 #include "nr-fh-control.h"
 #include "nr-net-device.h"
 
+#include "ns3/deprecated.h"
 #include "ns3/traced-callback.h"
 #include <ns3/oran-interface.h>
 namespace ns3
@@ -149,20 +150,20 @@ class NrGnbNetDevice : public NrNetDevice
     bool m_forceE2FileLogging;
 
     struct CellStats {
-        uint16_t cellId = 0;         // Cell ID
-        double prbUsagePercentage = 0; // PRB usage percentage
-        double averageLastRb= 0;    // Store the average value of the last RBG
+      uint16_t cellId = 0;         // Cell ID
+      double prbUsagePercentage = 0; // PRB usage percentage
+      double averageLastRb= 0;    // Store the average value of the last RBG
     };
 
     struct UEStats {
-        uint64_t IMSI;
-        double SINR;
-        double RSRP;
-        double dl_tp;
-        bool MIMO_enabled = false;
-        uint8_t mcs;
-        uint8_t ri;
-        uint8_t cqi;
+      uint64_t IMSI;
+      double SINR= 0;
+      double RSRP= 0;
+      double dl_tp= 0 ;
+      bool MIMO_enabled = false;
+      uint8_t mcs=0;
+      uint8_t ri=0;
+      uint8_t cqi=0;
     };
 
     void Cell_KPI_tracker();

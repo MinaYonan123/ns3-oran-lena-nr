@@ -5,7 +5,6 @@
 #include "nr-gnb-net-device.h"
 
 #include "bandwidth-part-gnb.h"
-// #include "bandwidth-part-ue.h"
 #include "bwp-manager-gnb.h"
 #include "nr-gnb-component-carrier-manager.h"
 #include "nr-gnb-mac.h"
@@ -261,63 +260,6 @@ NrGnbNetDevice::DoInitialize()
 }
 
 void
-NrGnbNetDevice::Cell_KPI_tracker()
-{
-    // Create a folder
-    std::stringstream folderName;
-    folderName << "trace_" << sim_id;
-
-    if (!std::filesystem::exists(folderName.str()))
-    {
-        std::filesystem::create_directory(folderName.str());
-    }
-
-    // Construct the full file path within the folder
-    std::stringstream cell_kpi_file;
-    cell_kpi_file << folderName.str() << "/Cell_stats_" << sim_id << ".csv";
-
-    // Open the file in append mode
-    std::ofstream traceFile(cell_kpi_file.str(), std::ios::out | std::ios::app);
-
-    if (traceFile.is_open())
-    {
-        // If the file is empty, write the header
-        static bool headerWritten = false;
-        if (!headerWritten && traceFile.tellp() == 0)
-        {
-            traceFile << "CELL_ID,PRB_USAGE,CURR_PRB\n";
-            headerWritten = true;
-        }
-        Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
-        NrGnbPhy::RbStats stats = gnbPhy->GetRBStats();
-
-        // Fill CellStats structure
-        CellStats cellStats;
-        cellStats.cellId = stats.cellId;
-
-        // Set PRB usage percentage (validate NaN and negative)
-        cellStats.prbUsagePercentage =
-            (std::isnan(stats.prbUsagePercentage) || stats.prbUsagePercentage < 0.0)
-                ? 0.0
-                : stats.prbUsagePercentage;
-
-        // Set averageLastRb (validate NaN and negative)
-        cellStats.averageLastRb = (std::isnan(stats.averageLastRb) || stats.averageLastRb < 0.0)
-                                      ? 0.0
-                                      : stats.averageLastRb;
-
-        // Print struct contents
-        NS_LOG_UNCOND("Cell stats-> gNB " << cellStats.cellId << " | PRB Usage: "
-                                          << cellStats.prbUsagePercentage << " %"
-                                          << " | Avg Last RB: " << cellStats.averageLastRb);
-        traceFile << cellStats.cellId << "," << cellStats.prbUsagePercentage << "," << cellStats.averageLastRb << "\n";
-    }
-    traceFile.close();
-    // Reschedule KPI_tracker every 100 ms
-    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::Cell_KPI_tracker, this);
-}
-
-void
 NrGnbNetDevice::DoDispose()
 {
     NS_LOG_FUNCTION(this);
@@ -517,6 +459,59 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
 }
 
 void
+NrGnbNetDevice::Cell_KPI_tracker()
+{
+    NS_LOG_UNCOND("---------------------------------------------");
+    // Create a folder
+    std::stringstream folderName;
+    folderName << "trace_" << sim_id;
+
+    if (!std::filesystem::exists(folderName.str()))
+    {
+        std::filesystem::create_directory(folderName.str());
+    }
+
+    // Construct the full file path within the folder
+    std::stringstream cell_kpi_file;
+    cell_kpi_file << folderName.str() << "/Cell_" << this->GetCellId() << "_Cell_stats_" << sim_id
+                  << ".csv";
+
+    // Open the file in append mode
+    std::ofstream traceFile(cell_kpi_file.str(), std::ios::out | std::ios::app);
+
+    if (traceFile.is_open())
+    {
+        // If the file is empty, write the header
+        static bool headerWritten = false;
+        if (!headerWritten && traceFile.tellp() == 0)
+        {
+            traceFile << "CELL_ID,PRB_USAGE,CURR_PRB\n";
+            headerWritten = true;
+        }
+        Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
+        NrGnbPhy::RbStats stats = gnbPhy->GetRBStats();
+
+        // Fill CellStats structure
+        CellStats cellStats;
+        cellStats.cellId = this->GetCellId();
+        cellStats.prbUsagePercentage = stats.prbUsagePercentage;
+        cellStats.averageLastRb = stats.averageLastRb;
+        // Print struct contents
+        NS_LOG_UNCOND("Cell stats-> gNB "
+                      << cellStats.cellId
+                      << " | PRB Usage: " << static_cast<int>(cellStats.prbUsagePercentage) << " %"
+                      << " | Avg Last RB: " << static_cast<int>(cellStats.averageLastRb));
+
+        traceFile << Simulator::Now().GetSeconds() << "," << cellStats.cellId << ","
+                  << static_cast<int>(cellStats.prbUsagePercentage) << ","
+                  << static_cast<int>(cellStats.averageLastRb) << "\n";
+    }
+    traceFile.close();
+    // Reschedule KPI_tracker every 100 ms
+    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::Cell_KPI_tracker, this);
+}
+
+void
 NrGnbNetDevice::UE_KPI_tracker()
 {
     // Create a folder
@@ -530,7 +525,8 @@ NrGnbNetDevice::UE_KPI_tracker()
 
     // Construct the full file path within the folder
     std::stringstream ue_kpi_file;
-    ue_kpi_file << folderName.str() << "/UE_stats_" << sim_id << ".csv";
+    ue_kpi_file << folderName.str() << "/Cell_" << this->GetCellId() << "_UE_stats_" << sim_id
+                << ".csv";
 
     // Open the file in append mode
     std::ofstream traceFile(ue_kpi_file.str(), std::ios::out | std::ios::app);
@@ -563,8 +559,8 @@ NrGnbNetDevice::UE_KPI_tracker()
                 uePhy->ReportUeMeasurements();
                 double rsrp = uePhy->GetRsrp();
                 double sinr = uePhy->GetSINR();
-                double sinr_dB =
-                    (sinr > 0) ? 10 * log10(sinr) : -std::numeric_limits<double>::infinity();
+                double sinr_dB = 10 * log10(sinr);
+
                 double dl_tp = uePhy->GetDLTP();
                 Ptr<NrDlCqiMessage> cqiMsg = uePhy->GetMIMOkpi();
                 uint64_t imsi = ueDevice->GetImsi();
@@ -590,32 +586,36 @@ NrGnbNetDevice::UE_KPI_tracker()
         for (auto& pair : ueStatsMap)
         {
             UEStats& stats = pair.second;
-
             if (stats.MIMO_enabled)
             {
-                NS_LOG_UNCOND("UE stats-> UE " << stats.IMSI << " : Serving cell "
-                                               << this->GetCellId() << " | SINR: " << stats.SINR
-                                               << " dB"
-                                               << " | RSRP: " << stats.RSRP << " dBm"
-                                               << " | DL TP: " << stats.dl_tp << " Mbps"
-                                               << " | MCS: " << static_cast<uint32_t>(stats.mcs)
-                                               << " | RI: " << static_cast<uint32_t>(stats.ri)
-                                               << " | CQI: " << static_cast<uint32_t>(stats.cqi));
-                traceFile << stats.IMSI << "," << this->GetCellId() << "," << stats.SINR << ","
-                          << stats.RSRP << "," << stats.dl_tp << ","
-                          << static_cast<uint32_t>(stats.mcs) << ","
-                          << static_cast<uint32_t>(stats.ri) << ","
-                          << static_cast<uint32_t>(stats.cqi) << "\n";
+                NS_LOG_UNCOND(
+                    "UE stats-> UE "
+                    << stats.IMSI << " : Serving cell " << this->GetCellId()
+                    << " | SINR: " << std::fixed << std::setprecision(1) << stats.SINR << " dB"
+                    << " | RSRP: " << std::fixed << std::setprecision(1) << stats.RSRP << " dBm"
+                    << " | DL TP: " << std::fixed << std::setprecision(1) << stats.dl_tp << " Mbps"
+                    << " | MCS: " << static_cast<int>(stats.mcs) << " | RI: "
+                    << static_cast<int>(stats.ri) << " | CQI: " << static_cast<int>(stats.cqi));
+                traceFile << std::fixed << std::setprecision(1) << stats.IMSI << ","
+                          << this->GetCellId() << "," << static_cast<uint32_t>(stats.SINR) << ","
+                          << static_cast<uint32_t>(stats.RSRP) << ","
+                          << static_cast<uint32_t>(stats.dl_tp) << ","
+                          << static_cast<int>(stats.mcs) << "," << static_cast<int>(stats.ri) << ","
+                          << static_cast<int>(stats.cqi) << "\n";
             }
             else
             {
                 NS_LOG_UNCOND("UE stats-> UE " << stats.IMSI << " : Serving cell "
-                                               << this->GetCellId() << " | SINR: " << stats.SINR
-                                               << " dB"
-                                               << " | RSRP: " << stats.RSRP << " dBm"
-                                               << " | DL TP: " << stats.dl_tp << " Mbps");
-                traceFile << stats.IMSI << "," << this->GetCellId() << "," << stats.SINR << ","
-                          << stats.RSRP << "," << stats.dl_tp << "\n";
+                                               << this->GetCellId() << " | SINR: " << std::fixed
+                                               << std::setprecision(1) << stats.SINR << " dB"
+                                               << " | RSRP: " << std::fixed << std::setprecision(1)
+                                               << stats.RSRP << " dBm"
+                                               << " | DL TP: " << std::fixed << std::setprecision(1)
+                                               << stats.dl_tp << " Mbps");
+
+                traceFile << std::fixed << std::setprecision(1) << Simulator::Now().GetSeconds()
+                          << "," << stats.IMSI << "," << this->GetCellId() << "," << stats.SINR
+                          << "," << stats.RSRP << "," << stats.dl_tp;
             }
             stats.MIMO_enabled = false;
         }
@@ -627,6 +627,7 @@ NrGnbNetDevice::UE_KPI_tracker()
     }
 
     Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::UE_KPI_tracker, this);
+    NS_LOG_UNCOND("---------------------------------------------\n");
 }
 
 } // namespace ns3
