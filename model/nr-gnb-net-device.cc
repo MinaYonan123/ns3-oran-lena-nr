@@ -458,34 +458,33 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
     return 0;
 }
 
-void
-NrGnbNetDevice::Cell_KPI_tracker()
-{
-    NS_LOG_UNCOND("---------------------------------------------");
+#include <iomanip> // Required for std::fixed and std::setprecision
+
+// ... (rest of your code)
+
+void NrGnbNetDevice::Cell_KPI_tracker() {
+    std::cout << "---------------------------------------------\n";
     // Create a folder
     std::stringstream folderName;
     folderName << "trace_" << sim_id;
 
-    if (!std::filesystem::exists(folderName.str()))
-    {
+    if (!std::filesystem::exists(folderName.str())) {
         std::filesystem::create_directory(folderName.str());
     }
 
     // Construct the full file path within the folder
     std::stringstream cell_kpi_file;
-    cell_kpi_file << folderName.str() << "/Cell_" << this->GetCellId() << "_Cell_stats_" << sim_id
-                  << ".csv";
+    cell_kpi_file << folderName.str() << "/Cell_" << this->GetCellId()
+                  << "_Cell_stats_" << sim_id << ".csv";
 
     // Open the file in append mode
     std::ofstream traceFile(cell_kpi_file.str(), std::ios::out | std::ios::app);
 
-    if (traceFile.is_open())
-    {
+    if (traceFile.is_open()) {
         // If the file is empty, write the header
         static bool headerWritten = false;
-        if (!headerWritten && traceFile.tellp() == 0)
-        {
-            traceFile << "CELL_ID,PRB_USAGE,CURR_PRB\n";
+        if (!headerWritten && traceFile.tellp() == 0) {
+            traceFile << "TS,CELL_ID,PRB_USAGE,CURR_PRB\n";
             headerWritten = true;
         }
         Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
@@ -496,59 +495,57 @@ NrGnbNetDevice::Cell_KPI_tracker()
         cellStats.cellId = this->GetCellId();
         cellStats.prbUsagePercentage = stats.prbUsagePercentage;
         cellStats.averageLastRb = stats.averageLastRb;
-        // Print struct contents
+
+        // Print struct contents with fixed notation and precision
         NS_LOG_UNCOND("Cell stats-> gNB "
                       << cellStats.cellId
-                      << " | PRB Usage: " << static_cast<int>(cellStats.prbUsagePercentage) << " %"
-                      << " | Avg Last RB: " << static_cast<int>(cellStats.averageLastRb));
+                      << " | PRB Usage: " << std::fixed << std::setprecision(0) << cellStats.prbUsagePercentage << " %" // No decimal places for percentage
+                      << " | Avg Last RB: " << std::fixed << std::setprecision(0) << cellStats.averageLastRb); // No decimal places for Avg Last RB
 
         traceFile << Simulator::Now().GetSeconds() << "," << cellStats.cellId << ","
-                  << static_cast<int>(cellStats.prbUsagePercentage) << ","
-                  << static_cast<int>(cellStats.averageLastRb) << "\n";
+                  << std::fixed << std::setprecision(2) << cellStats.prbUsagePercentage << "," // Use 2 decimal places for CSV
+                  << std::fixed << std::setprecision(2) << cellStats.averageLastRb
+                  << "\n";
     }
     traceFile.close();
     // Reschedule KPI_tracker every 100 ms
-    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::Cell_KPI_tracker, this);
+    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::Cell_KPI_tracker,
+                        this);
 }
 
-void
-NrGnbNetDevice::UE_KPI_tracker()
-{
+void NrGnbNetDevice::UE_KPI_tracker() {
     // Create a folder
     std::stringstream folderName;
     folderName << "trace_" << sim_id;
 
-    if (!std::filesystem::exists(folderName.str()))
-    {
+    if (!std::filesystem::exists(folderName.str())) {
         std::filesystem::create_directory(folderName.str());
     }
 
     // Construct the full file path within the folder
     std::stringstream ue_kpi_file;
-    ue_kpi_file << folderName.str() << "/Cell_" << this->GetCellId() << "_UE_stats_" << sim_id
-                << ".csv";
+    ue_kpi_file << folderName.str() << "/Cell_" << this->GetCellId()
+                << "_UE_stats_" << sim_id << ".csv";
 
     // Open the file in append mode
     std::ofstream traceFile(ue_kpi_file.str(), std::ios::out | std::ios::app);
 
-    if (traceFile.is_open())
-    {
+    if (traceFile.is_open()) {
         // If the file is empty, write the header
         static bool headerWritten = false;
-        if (!headerWritten && traceFile.tellp() == 0)
-        {
-            traceFile << "IMSI,CELL_ID,SINR,RSRP,MCS,RI,CQI\n";
+        if (!headerWritten && traceFile.tellp() == 0) {
+            traceFile << "TS,IMSI,CELL_ID,SINR,RSRP,DL_TP,MCS,RI,CQI\n";
             headerWritten = true;
         }
 
         std::unordered_map<uint64_t, UEStats> ueStatsMap;
 
-        for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it)
-        {
+        for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End();
+             ++it) {
             Ptr<Node> node = *it;
-            for (uint32_t i = 0; i < node->GetNDevices(); ++i)
-            {
-                Ptr<NrUeNetDevice> ueDevice = node->GetDevice(i)->GetObject<NrUeNetDevice>();
+            for (uint32_t i = 0; i < node->GetNDevices(); ++i) {
+                Ptr<NrUeNetDevice> ueDevice =
+                    node->GetDevice(i)->GetObject<NrUeNetDevice>();
                 if (!ueDevice || ueDevice->GetCellId() != this->GetCellId())
                     continue;
 
@@ -565,14 +562,13 @@ NrGnbNetDevice::UE_KPI_tracker()
                 Ptr<NrDlCqiMessage> cqiMsg = uePhy->GetMIMOkpi();
                 uint64_t imsi = ueDevice->GetImsi();
 
-                UEStats& stats = ueStatsMap[imsi];
+                UEStats &stats = ueStatsMap[imsi];
                 stats.IMSI = imsi;
                 stats.SINR = sinr_dB;
                 stats.RSRP = rsrp;
                 stats.dl_tp = dl_tp;
 
-                if (cqiMsg)
-                {
+                if (cqiMsg) {
                     DlCqiInfo cqiInfo = cqiMsg->GetDlCqi();
                     stats.mcs = cqiInfo.m_mcs;
                     stats.ri = cqiInfo.m_ri;
@@ -583,51 +579,46 @@ NrGnbNetDevice::UE_KPI_tracker()
         }
 
         // ✅ Logging outside the loop to avoid duplication
-        for (auto& pair : ueStatsMap)
-        {
-            UEStats& stats = pair.second;
-            if (stats.MIMO_enabled)
-            {
-                NS_LOG_UNCOND(
-                    "UE stats-> UE "
-                    << stats.IMSI << " : Serving cell " << this->GetCellId()
-                    << " | SINR: " << std::fixed << std::setprecision(1) << stats.SINR << " dB"
-                    << " | RSRP: " << std::fixed << std::setprecision(1) << stats.RSRP << " dBm"
-                    << " | DL TP: " << std::fixed << std::setprecision(1) << stats.dl_tp << " Mbps"
-                    << " | MCS: " << static_cast<int>(stats.mcs) << " | RI: "
-                    << static_cast<int>(stats.ri) << " | CQI: " << static_cast<int>(stats.cqi));
-                traceFile << std::fixed << std::setprecision(1) << stats.IMSI << ","
-                          << this->GetCellId() << "," << static_cast<uint32_t>(stats.SINR) << ","
-                          << static_cast<uint32_t>(stats.RSRP) << ","
-                          << static_cast<uint32_t>(stats.dl_tp) << ","
-                          << static_cast<int>(stats.mcs) << "," << static_cast<int>(stats.ri) << ","
-                          << static_cast<int>(stats.cqi) << "\n";
-            }
-            else
-            {
-                NS_LOG_UNCOND("UE stats-> UE " << stats.IMSI << " : Serving cell "
-                                               << this->GetCellId() << " | SINR: " << std::fixed
-                                               << std::setprecision(1) << stats.SINR << " dB"
-                                               << " | RSRP: " << std::fixed << std::setprecision(1)
-                                               << stats.RSRP << " dBm"
-                                               << " | DL TP: " << std::fixed << std::setprecision(1)
-                                               << stats.dl_tp << " Mbps");
-
-                traceFile << std::fixed << std::setprecision(1) << Simulator::Now().GetSeconds()
-                          << "," << stats.IMSI << "," << this->GetCellId() << "," << stats.SINR
-                          << "," << stats.RSRP << "," << stats.dl_tp;
+        for (auto &pair : ueStatsMap) {
+            UEStats &stats = pair.second;
+            if (stats.MIMO_enabled) {
+                NS_LOG_UNCOND("UE stats-> UE "
+                              << stats.IMSI << " : Serving cell " << this->GetCellId()
+                              << " | SINR: " << std::fixed << std::setprecision(1) << stats.SINR << " dB" // One decimal for SINR
+                              << " | RSRP: " << std::fixed << std::setprecision(0) << stats.RSRP << " dBm" // No decimal for RSRP as per example
+                              << " | DL TP: " << std::fixed << std::setprecision(1) << stats.dl_tp << " Mbps" // One decimal for DL TP
+                              << " | MCS: " << static_cast<uint32_t>(stats.mcs)
+                              << " | RI: " << static_cast<uint32_t>(stats.ri)
+                              << " | CQI: " << static_cast<uint32_t>(stats.cqi));
+                traceFile << Simulator::Now().GetSeconds() << "," << stats.IMSI << ","
+                          << this->GetCellId() << "," << std::fixed << std::setprecision(2) << stats.SINR << "," // 2 decimals for CSV
+                          << std::fixed << std::setprecision(2) << stats.RSRP << "," // 2 decimals for CSV
+                          << std::fixed << std::setprecision(2) << stats.dl_tp << "," // 2 decimals for CSV
+                          << static_cast<uint32_t>(stats.mcs) << ","
+                          << static_cast<uint32_t>(stats.ri) << ","
+                          << static_cast<uint32_t>(stats.cqi) << "\n";
+            } else {
+                NS_LOG_UNCOND("UE stats-> UE "
+                              << stats.IMSI << " : Serving cell " << this->GetCellId()
+                              << " | SINR: " << std::fixed << std::setprecision(1) << stats.SINR << " dB"
+                              << " | RSRP: " << std::fixed << std::setprecision(0) << stats.RSRP << " dBm"
+                              << " | DL TP: " << std::fixed << std::setprecision(1) << stats.dl_tp << " Mbps");
+                traceFile << Simulator::Now().GetSeconds() << "," << stats.IMSI << ","
+                          << this->GetCellId() << "," << std::fixed << std::setprecision(2) << stats.SINR << ","
+                          << std::fixed << std::setprecision(2) << stats.RSRP << ","
+                          << std::fixed << std::setprecision(2) << stats.dl_tp << "\n";
             }
             stats.MIMO_enabled = false;
         }
         traceFile.close();
-    }
-    else
-    {
-        std::cerr << "Error opening file for writing: " << ue_kpi_file.str() << std::endl;
+    } else {
+        std::cerr << "Error opening file for writing: " << ue_kpi_file.str()
+                  << std::endl;
     }
 
     Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::UE_KPI_tracker, this);
-    NS_LOG_UNCOND("---------------------------------------------\n");
+    std::cout << "---------------------------------------------\n";
 }
+
 
 } // namespace ns3
