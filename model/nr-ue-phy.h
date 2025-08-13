@@ -25,6 +25,15 @@ class BeamManager;
 class BeamId;
 class NrUePowerControl;
 
+struct UeKpiInfo
+{
+  uint16_t rnti; ///< Radio Network Temporary Identifier
+  uint8_t  cqi;  ///< Channel Quality Indicator
+  uint8_t  mcs;  ///< Modulation and Coding Scheme
+  uint8_t  ri;   ///< Rank Indicator
+};
+
+
 /**
  * \ingroup ue-phy
  * \brief The UE PHY class
@@ -136,6 +145,7 @@ class NrUePhy : public NrPhy
     double GetDLTP();
     Ptr<NrDlCqiMessage> GetMIMOkpi() const;
 
+    UeKpiInfo GetUEkpi() const;
 
     /**
      * \brief Get NR uplink power control entity
@@ -956,13 +966,14 @@ class NrUePhy : public NrPhy
     double m_sinrDbFrame;           ///< the average SINR per radio frame
     SpectrumValue m_ctrlSinrForRlf; ///< the CTRL SINR used for RLF detection
     bool m_enableRlfDetection;      ///< Flag to enable/disable RLF detection
+    uint8_t m_csiFeedbackType;      ///< CSI feedback type configured by NrHelper
+
     double m_sinr_current; //for KPI tracking
     double m_dl_tp;//for KPI tracking
 
     std::vector<std::pair<double, uint64_t>> g_dlTbSizeForOneUe; //report for TP calculation
     uint64_t t_last_TP_DL=0;//time for catching last TP calculation timestamp
-    mutable Ptr<NrDlCqiMessage> m_lastDlCqiMessage;  // Store last generated message
-
+    mutable UeKpiInfo m_lastUeKpiInfo = {0, 0, 0, 0}; // In-class initializer
 };
 
 } // namespace ns3

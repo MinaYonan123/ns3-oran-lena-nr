@@ -995,45 +995,45 @@ NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo& allocInfo) const
                      availRb, GetSymbolsPerSlot() - dataSym, GetBwpId(),
                      GetCellId());
 
-  uint32_t totalSymbols = GetSymbolsPerSlot();
+  // Get total OFDM symbols per slot and total REs per RB
+  uint32_t totalSymbols = GetSymbolsPerSlot(); // Typically 14 for normal CP
   uint32_t totalRePerRb = GetNumRbPerRbg() * totalSymbols;
 
-  double dataRb = static_cast<double>(dataReg) / totalRePerRb;
-  double ctrlRb = static_cast<double>(ctrlReg) / totalRePerRb;
+  // Calculate normalized RB usage from RE usage
+  double dataRbUsage = static_cast<double>(dataReg) / totalRePerRb;
+  double ctrlRbUsage = static_cast<double>(ctrlReg) / totalRePerRb;
+  double totalRbUsage = dataRbUsage + ctrlRbUsage;
 
-  double totalPrbUsage = dataRb + ctrlRb;
+  // Convert to PRB usage percentage
+  double prbUsagePercentage = totalRbUsage / availRb * 100.0;
 
-  double tmp_usage = totalPrbUsage/availRb * 100;
   // Update metrics
-  RbStats rbStats = {0};
-  rbStats.prbUsagePercentage += tmp_usage;
-  rbStats.averageLastRb += totalPrbUsage;
-  rbStats.iterations = rbStats.iterations + 1;
+  RbStats rbStats = m_RbStats; // Use existing stats object
+  rbStats.prbUsagePercentage += prbUsagePercentage;
+  rbStats.averageLastRb += totalRbUsage;
+  rbStats.iterations += 1;
 
   m_RbStats = rbStats;
-  // NS_LOG_UNCOND("PRB_Usage(%)=" <<
-  // rbStats.prbUsagePercentage/rbStats.iterations);
 
-/*   NS_LOG_UNCOND("DataSlotStats: "
-                 << "CellId=" << GetCellId()
-                 << ", SfnSf=" << allocInfo.m_sfnSf
-                 << ", ActiveUe=" << activeUe.size()
-                 << ", UsedRE=" << dataReg
-                 << ", UsedSymbols=" << dataSym
-                 << ", AvailRB=" << availRb
-                 << ", AvailSymbols=" << GetSymbolsPerSlot() - ctrlSym
-                 << ", BwpId=" << GetBwpId()
-                 << ", PRB_Usage(%)=" << static_cast<uint32_t>(tmp_usage));*/
+/*  // Optional detailed debug output
+  NS_LOG_UNCOND("PRB Stats (CellId=" << GetCellId() << "):");
+  NS_LOG_UNCOND("  - Symbols per Slot       : " << totalSymbols);
+  NS_LOG_UNCOND("  - RE per PRB             : " << totalRePerRb);
+  NS_LOG_UNCOND("  - Used REs (Data / Ctrl) : " << dataReg << " / " << ctrlReg);
+  NS_LOG_UNCOND("  - Normalized PRBs (D/C)  : " << dataRbUsage << " / " << ctrlRbUsage);
+  NS_LOG_UNCOND("  - Total PRB Usage (%)    : " << prbUsagePercentage);
+  NS_LOG_UNCOND("  - Accumulated Avg Usage  : " << rbStats.prbUsagePercentage / rbStats.iterations);*/
 
-  /* NS_LOG_UNCOND("DataSlotStats: " << "CellId=" << GetCellId()
-                                   << ", PRB_Usage(%)="
-                                   << rbStats.prbUsagePercentage<< ",
-     PRB_last="<< rbStats.averageLastRb);*/
+/*  // Quick summary log (optional)
+  NS_LOG_UNCOND("Data PRB: Cell " << GetCellId()
+                                  << ", current=" << dataSym
+                                  << ", available=" << availRb
+                                  << ", usage=" << (static_cast<double>(dataSym) / availRb * 100.0) << "%");
 
-  // rbStats.prbUsagePercentage = ctrlSym / availRb * 100;
-  // NS_LOG_UNCOND("Ctrl PRB: " << GetCellId() << "," << ctrlSym << "," <<
-  // availRb
-  //                        << "," << rbStats.prbUsagePercentage);
+  NS_LOG_UNCOND("Ctrl PRB: Cell " << GetCellId()
+                                  << ", current=" << ctrlSym
+                                  << ", available=" << availRb
+                                  << ", usage=" << (static_cast<double>(ctrlSym) / availRb * 100.0) << "%");*/
 }
 
 void

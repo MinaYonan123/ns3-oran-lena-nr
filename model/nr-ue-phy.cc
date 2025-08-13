@@ -298,11 +298,26 @@ double NrUePhy::GetDLTP()
   return throughput;
 }
 
+/*
 Ptr<NrDlCqiMessage> NrUePhy::GetMIMOkpi() const
 {
   Ptr<NrDlCqiMessage> prev = m_lastDlCqiMessage;
   m_lastDlCqiMessage = nullptr;
   return prev;
+}
+*/
+UeKpiInfo NrUePhy::GetUEkpi() const
+{
+  UeKpiInfo info = m_lastUeKpiInfo; // Directly access the struct
+  //m_lastUeKpiInfo({0, 0, 0, 0});
+  UeKpiInfo info0;
+  info0.rnti = 0;
+  info0.cqi  = 0;
+  info0.mcs  = 0;
+  info0.ri   = 1;
+
+  m_lastUeKpiInfo = info0;
+  return info;
 }
 
 Ptr<NrUePowerControl>
@@ -1239,6 +1254,17 @@ NrUePhy::CreateDlCqiFeedbackMessage(const SpectrumValue& sinr)
     std::vector<int> cqi;
     dlcqi.m_wbCqi = ComputeCqi(sinr);
     msg->SetDlCqi(dlcqi);
+
+    //m_cqiFeedbackTrace(m_rnti, dlcqi.m_wbCqi, dlcqi.m_mcs, 1);
+
+    UeKpiInfo info;
+    info.rnti = m_rnti;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = 1;
+
+    m_lastUeKpiInfo = info;
+
     return msg;
 }
 
@@ -1856,11 +1882,20 @@ NrUePhy::GenerateDlCqiReportMimo(const std::vector<MimoSignalChunk>& mimoChunks)
         .m_optPrecMat = cqi.m_optPrecMat,
     };
 
+    //m_cqiFeedbackTrace(m_rnti, cqi.m_wbCqi, cqi.m_mcs, cqi.m_rank);
+
+    UeKpiInfo info;
+    info.rnti = m_rnti;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = cqi.m_rank;
+
+    m_lastUeKpiInfo = info;
+
     auto msg = Create<NrDlCqiMessage>();
     msg->SetSourceBwp(GetBwpId());
     msg->SetDlCqi(dlcqi);
 
-    m_lastDlCqiMessage = msg;  // store for later access
 
     DoSendControlMessage(msg);
 }

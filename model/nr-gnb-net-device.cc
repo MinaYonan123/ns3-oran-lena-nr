@@ -21,75 +21,114 @@
 #include <ns3/node.h>
 #include <ns3/object-map.h>
 #include <ns3/pointer.h>
+#include "encode_e2apv1.hpp"
+#include <ns3/double.h>
 
 #include <cmath>
+#include <curl/curl.h>
 #include <filesystem> // For filesystem utilities, available since C++17
 #include <fstream>
+#include <iomanip> // Required for std::fixed and std::setprecision
 #include <iostream>
 #include <sstream>
 #include <sys/time.h>
 #include <vector>
+#include <string>
 
-namespace ns3
-{
+std::vector<int> g_ueImsiList;
+uint64_t start_sim_time = 0;
+uint64_t current_sim_time = 0;
+bool headerWritten_Cell = false;
+bool headerWritten_UE = false;
+
+
+
+
+// Example signature for Simulator::Now() mock
+// Replace this with your actual ns-3 or simulation time function
+// #include "ns3/simulator.h"  // if using ns-3
+
+void SendToInfluxDB(const std::string &payload) {
+  CURL *curl = curl_easy_init();
+  std::string influx_host = "localhost";
+  std::string influx_port = "8086";
+  std::string influx_user = "root";
+  std::string influx_password = "root";
+  std::string db_name = "influx";
+
+  if (curl) {
+    const std::string url = "http://" + influx_host + ":" + influx_port +
+                            "/api/v2/write?bucket=influx&precision=ns";
+    struct curl_slist *headers = nullptr;
+    const std::string auth =
+        "Authorization: Token " + influx_user + ":" + influx_password;
+    headers = curl_slist_append(headers, auth.c_str());
+    headers = curl_slist_append(headers, "Content-Type: text/plain");
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+      std::cerr << "InfluxDB POST failed: " << curl_easy_strerror(res)
+                << std::endl;
+    }
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+  }
+}
+
+namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE("NrGnbNetDevice");
 
 NS_OBJECT_ENSURE_REGISTERED(NrGnbNetDevice);
 
-TypeId
-NrGnbNetDevice::GetTypeId()
-{
-    static TypeId tid =
-        TypeId("ns3::NrGnbNetDevice")
-            .SetParent<NrNetDevice>()
-            .AddConstructor<NrGnbNetDevice>()
-            .AddAttribute("NrGnbComponentCarrierManager",
-                          "The component carrier manager associated to this GnbNetDevice",
-                          PointerValue(),
-                          MakePointerAccessor(&NrGnbNetDevice::m_componentCarrierManager),
-                          MakePointerChecker<NrGnbComponentCarrierManager>())
-            .AddAttribute("BandwidthPartMap",
-                          "List of Bandwidth Part container.",
-                          ObjectMapValue(),
-                          MakeObjectMapAccessor(&NrGnbNetDevice::m_ccMap),
-                          MakeObjectMapChecker<BandwidthPartGnb>())
-            .AddAttribute("NrGnbRrc",
-                          "The RRC layer associated with the gNB",
-                          PointerValue(),
-                          MakePointerAccessor(&NrGnbNetDevice::m_rrc),
-                          MakePointerChecker<NrGnbRrc>())
-            .AddAttribute("CellId",
-                          "Cell Identifier",
-                          UintegerValue(0),
-                          MakeUintegerAccessor(&NrGnbNetDevice::m_cellId),
-                          MakeUintegerChecker<uint16_t>())
-            .AddAttribute("E2Termination",
-                          "The E2 termination object associated to this node",
-                          PointerValue(),
-                          MakePointerAccessor(&NrGnbNetDevice::SetE2Termination,
-                                              &NrGnbNetDevice::GetE2Termination),
-                          MakePointerChecker<E2Termination>())
-            .AddAttribute("EnableE2FileLogging",
-                          "If true, force E2 indication generation and write E2 fields in csv file",
+TypeId NrGnbNetDevice::GetTypeId() {
+  static TypeId tid =
+      TypeId("ns3::NrGnbNetDevice")
+          .SetParent<NrNetDevice>()
+          .AddConstructor<NrGnbNetDevice>()
+          .AddAttribute(
+              "NrGnbComponentCarrierManager",
+              "The component carrier manager associated to this GnbNetDevice",
+              PointerValue(),
+              MakePointerAccessor(&NrGnbNetDevice::m_componentCarrierManager),
+              MakePointerChecker<NrGnbComponentCarrierManager>())
+          .AddAttribute("BandwidthPartMap", "List of Bandwidth Part container.",
+                        ObjectMapValue(),
+                        MakeObjectMapAccessor(&NrGnbNetDevice::m_ccMap),
+                        MakeObjectMapChecker<BandwidthPartGnb>())
+          .AddAttribute("NrGnbRrc", "The RRC layer associated with the gNB",
+                        PointerValue(),
+                        MakePointerAccessor(&NrGnbNetDevice::m_rrc),
+                        MakePointerChecker<NrGnbRrc>())
+          .AddAttribute("sim_id", "ID of simulation", UintegerValue(0),
+                        MakeUintegerAccessor(&NrGnbNetDevice::sim_id),
+                        MakeUintegerChecker<uint64_t>())
+            .AddAttribute("report_to_db", "Reporting to InfluxDB",
                           BooleanValue(false),
-                          MakeBooleanAccessor(&NrGnbNetDevice::m_forceE2FileLogging),
+                          MakeBooleanAccessor(&NrGnbNetDevice::report_to_db),
                           MakeBooleanChecker())
-            .AddAttribute("KPM_E2functionID",
-                          "Function ID to subscribe",
-                          DoubleValue(2),
-                          MakeDoubleAccessor(&NrGnbNetDevice::e2_func_id),
-                          MakeDoubleChecker<double>())
-            .AddAttribute("RC_E2functionID",
-                          "Function ID to subscribe",
-                          DoubleValue(3),
+            .AddAttribute ("E2Termination",
+                          "The E2 termination object associated to this node",
+                          PointerValue (),
+                          MakePointerAccessor (&NrGnbNetDevice::SetE2Termination,
+                                              &NrGnbNetDevice::GetE2Termination),
+                          MakePointerChecker <E2Termination> ())
+            .AddAttribute ("EnableE2FileLogging",
+                          "If true, force E2 indication generation and write E2 fields in csv file",
+                          BooleanValue (false),
+                          MakeBooleanAccessor (&NrGnbNetDevice::m_forceE2FileLogging),
+                          MakeBooleanChecker ())
+            .AddAttribute ("KPM_E2functionID", "Function ID to subscribe", DoubleValue (2),
+                          MakeDoubleAccessor (&NrGnbNetDevice::e2_func_id),
+                          MakeDoubleChecker<double> ())
+            .AddAttribute("RC_E2functionID", "Function ID to subscribe", DoubleValue(3),
                           MakeDoubleAccessor(&NrGnbNetDevice::rc_e2_func_id),
-                          MakeDoubleChecker<double>())
-            .AddAttribute("sim_id",
-                          "ID of simulation",
-                          UintegerValue(0),
-                          MakeUintegerAccessor(&NrGnbNetDevice::sim_id),
-                          MakeUintegerChecker<uint64_t>());
+                          MakeDoubleChecker<double>());
 
     return tid;
 }
@@ -458,167 +497,350 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
     return 0;
 }
 
-#include <iomanip> // Required for std::fixed and std::setprecision
+void NrGnbNetDevice::SetFlowMonitor(ns3::Ptr<ns3::FlowMonitor> monitor) {
+  NS_LOG_FUNCTION(this << monitor);
+  m_flowMonitor = monitor;
+}
+
+void NrGnbNetDevice::SetIpv4FlowClassifier(
+    ns3::Ptr<ns3::Ipv4FlowClassifier> classifier) {
+
+  NS_LOG_FUNCTION(this << classifier);
+  m_flowClassifier = classifier;
+
+  // Clear previous contents if you want a fresh list each call
+  g_ueImsiList.clear();
+
+  for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it) {
+    Ptr<Node> node = *it;
+    int nodeId = node->GetId();
+    int nDevs = node->GetNDevices();
+    for (int j = 0; j < nDevs; j++) {
+      Ptr<NrUeNetDevice> nruedev =
+          node->GetDevice(j)->GetObject<NrUeNetDevice>();
+      if (nruedev) {
+        uint64_t imsi = nruedev->GetImsi(); // keep as uint64_t
+
+        // Optional: avoid duplicates
+        if (std::find(g_ueImsiList.begin(), g_ueImsiList.end(), imsi) ==
+            g_ueImsiList.end()) {
+          g_ueImsiList.push_back(imsi);
+        }
+
+        // Debug: print which node/device we found a UE on (helpful to debug)
+        // std::cout << "Found UE on Node " << nodeId << " Device " << j
+        //   << " -> IMSI: " << imsi << std::endl;
+      }
+    }
+  }
+
+  // Print the collected IMSIs
+  std::cout << "=== UE IMSI List ===" << std::endl;
+  for (size_t i = 0; i < g_ueImsiList.size(); ++i) {
+    std::cout << "UE index " << i << " -> IMSI: " << g_ueImsiList[i]
+              << std::endl;
+  }
+
+  // rest of your method...
+  if (m_flowMonitor && m_flowClassifier) {
+    Simulator::Schedule(MilliSeconds(0), &NrGnbNetDevice::SampleThroughput,
+                        this, m_flowMonitor, m_flowClassifier, 0.1);
+  }
+}
+
+void NrGnbNetDevice::SampleThroughput(Ptr<FlowMonitor> monitor,
+                                      Ptr<Ipv4FlowClassifier> classifier,
+                                      double intervalSec) {
+  if (!monitor || !classifier)
+    return;
+  // refresh
+  monitor->CheckForLostPackets();
+  FlowMonitor::FlowStatsContainer stats = monitor->GetFlowStats();
+  double now = Simulator::Now().GetSeconds();
+
+  // initialize prev map on first run (so first printed delta isn't huge)
+  if (m_prevRxBytes.empty()) {
+    for (const auto &kv : stats) {
+      m_prevRxBytes[kv.first] = kv.second.rxBytes;
+    }
+    Simulator::Schedule(Seconds(intervalSec), &NrGnbNetDevice::SampleThroughput,
+                        this, monitor, classifier, intervalSec);
+    return;
+  }
+
+  // filter config
+  const bool filterOnlyUdp = false;
+  const bool filterByServerIp = true;
+  const Ipv4Address dlServerIp =
+      Ipv4Address("1.0.0.2"); // set to your DL server IP
+  const uint64_t minBytesThreshold = 64;
+
+  int id_for_imsi_it = 0;
+  // Loop over flows in FlowMonitor
+  for (const auto &kv : stats) {
+    ns3::FlowId id = kv.first;
+    const FlowMonitor::FlowStats &fs = kv.second;
+    Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow(id);
+
+    // filters
+    if (filterOnlyUdp && t.protocol != 17)
+      continue;
+    if (filterByServerIp && t.sourceAddress != dlServerIp)
+      continue;
+
+    uint64_t curr = fs.rxBytes;
+    uint64_t prev = 0;
+    auto itPrev = m_prevRxBytes.find(id);
+    if (itPrev != m_prevRxBytes.end())
+      prev = itPrev->second;
+    uint64_t diff = (curr >= prev) ? (curr - prev) : curr;
+    if (diff < minBytesThreshold) {
+      m_prevRxBytes[id] = curr;
+      continue;
+    }
+    double thrMbps =
+        (static_cast<double>(diff) * 8.0) / (intervalSec * 1e6); // Mbps
+
+    // assign IMSI index if this flow id is new to us
+    int IMSI_tmp = g_ueImsiList[id_for_imsi_it];
+    // save the throughput for this IMSI
+    m_imsiToTp[IMSI_tmp] = thrMbps;
+
+    /*    // print info
+        std::cout << "t=" << now << "s  Flow " << id << " (IMSI=" << IMSI_tmp <<
+       ") "
+                  << "(" << t.sourceAddress << ":" << t.sourcePort << " -> "
+                  << t.destinationAddress << ":" << t.destinationPort << ") "
+                  << "inst DL throughput = " << thrMbps << " Mbps"
+                  << "  rxBytes=" << curr << " prev=" << prev << std::endl;*/
+
+    // update prev bytes
+    m_prevRxBytes[id] = curr;
+    id_for_imsi_it = id_for_imsi_it + 1;
+  }
+  int now_ms = Simulator::Now().GetMilliSeconds();
+  current_sim_time = (sim_id + (uint64_t)now_ms) * 1000000ULL;
+
+  Simulator::Schedule(MilliSeconds(0), &NrGnbNetDevice::Cell_KPI_tracker, this);
+  Simulator::Schedule(MilliSeconds(0), &NrGnbNetDevice::UE_KPI_tracker, this);
+  // schedule next run
+  Simulator::Schedule(Seconds(intervalSec), &NrGnbNetDevice::SampleThroughput,
+                      this, monitor, classifier, intervalSec);
+}
 
 // ... (rest of your code)
 
 void NrGnbNetDevice::Cell_KPI_tracker() {
-    std::cout << "---------------------------------------------\n";
-    // Create a folder
-    std::stringstream folderName;
-    folderName << "trace_" << sim_id;
+  NS_LOG_UNCOND( "---------------------------------------------");
+  // Create a folder
+  std::stringstream folderName;
+  folderName << "trace_" << sim_id;
 
-    if (!std::filesystem::exists(folderName.str())) {
-        std::filesystem::create_directory(folderName.str());
+  if (!std::filesystem::exists(folderName.str())) {
+    std::filesystem::create_directory(folderName.str());
+  }
+
+  // Construct the full file path within the folder
+  std::stringstream cell_kpi_file;
+  cell_kpi_file << folderName.str() << "/Cell_" << this->GetCellId()
+                << "_Cell_stats_" << sim_id << ".csv";
+
+  // Open the file in append mode
+  std::ofstream traceFile(cell_kpi_file.str(), std::ios::out | std::ios::app);
+
+  if (traceFile.is_open()) {
+    // If the file is empty, write the header
+    if (!headerWritten_Cell && traceFile.tellp() == 0) {
+      traceFile << "TS,CELL_ID,PRB_USAGE,CURR_PRB\n";
+      headerWritten_Cell = true;
     }
+    Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
+    NrGnbPhy::RbStats stats = gnbPhy->GetRBStats();
 
-    // Construct the full file path within the folder
-    std::stringstream cell_kpi_file;
-    cell_kpi_file << folderName.str() << "/Cell_" << this->GetCellId()
-                  << "_Cell_stats_" << sim_id << ".csv";
+    // Fill CellStats structure
+    CellStats cellStats;
+    cellStats.cellId = this->GetCellId();
+    cellStats.prbUsagePercentage = stats.prbUsagePercentage;
+    cellStats.averageLastRb = stats.averageLastRb;
 
-    // Open the file in append mode
-    std::ofstream traceFile(cell_kpi_file.str(), std::ios::out | std::ios::app);
+    // Print struct contents with fixed notation and precision
+    NS_LOG_UNCOND(
+        "Cell stats-> gNB "
+        << cellStats.cellId << " | PRB Usage: " << std::fixed
+        << std::setprecision(0) << cellStats.prbUsagePercentage
+        << " %" // No decimal places for percentage
+        << " | Avg Last RB: " << std::fixed << std::setprecision(0)
+        << cellStats.averageLastRb); // No decimal places for Avg Last RB
 
-    if (traceFile.is_open()) {
-        // If the file is empty, write the header
-        static bool headerWritten = false;
-        if (!headerWritten && traceFile.tellp() == 0) {
-            traceFile << "TS,CELL_ID,PRB_USAGE,CURR_PRB\n";
-            headerWritten = true;
-        }
-        Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
-        NrGnbPhy::RbStats stats = gnbPhy->GetRBStats();
+    traceFile << Simulator::Now().GetSeconds() << "," << cellStats.cellId << ","
+              << std::fixed << std::setprecision(2)
+              << cellStats.prbUsagePercentage
+              << "," // Use 2 decimal places for CSV
+              << std::fixed << std::setprecision(2) << cellStats.averageLastRb
+              << "\n";
 
-        // Fill CellStats structure
-        CellStats cellStats;
-        cellStats.cellId = this->GetCellId();
-        cellStats.prbUsagePercentage = stats.prbUsagePercentage;
-        cellStats.averageLastRb = stats.averageLastRb;
+    if (report_to_db) {
+      std::ostringstream payload;
+      payload << "cell_stats,cell_id=" << cellStats.cellId
+              << " prb_usage=" << cellStats.prbUsagePercentage
+              << ",avg_last_rb=" << cellStats.averageLastRb
+              << " " << current_sim_time;  // <-- Influx timestamp in ns
 
-        // Print struct contents with fixed notation and precision
-        NS_LOG_UNCOND("Cell stats-> gNB "
-                      << cellStats.cellId
-                      << " | PRB Usage: " << std::fixed << std::setprecision(0) << cellStats.prbUsagePercentage << " %" // No decimal places for percentage
-                      << " | Avg Last RB: " << std::fixed << std::setprecision(0) << cellStats.averageLastRb); // No decimal places for Avg Last RB
-
-        traceFile << Simulator::Now().GetSeconds() << "," << cellStats.cellId << ","
-                  << std::fixed << std::setprecision(2) << cellStats.prbUsagePercentage << "," // Use 2 decimal places for CSV
-                  << std::fixed << std::setprecision(2) << cellStats.averageLastRb
-                  << "\n";
+      SendToInfluxDB(payload.str());
     }
-    traceFile.close();
-    // Reschedule KPI_tracker every 100 ms
-    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::Cell_KPI_tracker,
-                        this);
+  }
+  traceFile.close();
+  // Reschedule KPI_tracker every 100 ms
 }
 
 void NrGnbNetDevice::UE_KPI_tracker() {
-    // Create a folder
-    std::stringstream folderName;
-    folderName << "trace_" << sim_id;
+  // Create a folder
+  std::stringstream folderName;
+  folderName << "trace_" << sim_id;
 
-    if (!std::filesystem::exists(folderName.str())) {
-        std::filesystem::create_directory(folderName.str());
+  if (!std::filesystem::exists(folderName.str())) {
+    std::filesystem::create_directory(folderName.str());
+  }
+
+  // Construct the full file path within the folder
+  std::stringstream ue_kpi_file;
+  ue_kpi_file << folderName.str() << "/Cell_" << this->GetCellId()
+              << "_UE_stats_" << sim_id << ".csv";
+
+  // Open the file in append mode
+  std::ofstream traceFile(ue_kpi_file.str(), std::ios::out | std::ios::app);
+
+  if (traceFile.is_open()) {
+    // If the file is empty, write the header
+    if (!headerWritten_UE && traceFile.tellp() == 0) {
+      traceFile << "TS,IMSI,CELL_ID,SINR,RSRP,DL_TP,MCS,RI,CQI\n";
+      headerWritten_UE = true;
     }
 
-    // Construct the full file path within the folder
-    std::stringstream ue_kpi_file;
-    ue_kpi_file << folderName.str() << "/Cell_" << this->GetCellId()
-                << "_UE_stats_" << sim_id << ".csv";
+    std::unordered_map<uint64_t, UEStats> ueStatsMap;
 
-    // Open the file in append mode
-    std::ofstream traceFile(ue_kpi_file.str(), std::ios::out | std::ios::app);
+    for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End();
+         ++it) {
+      Ptr<Node> node = *it;
+      for (uint32_t i = 0; i < node->GetNDevices(); ++i) {
+        Ptr<NrUeNetDevice> ueDevice =
+            node->GetDevice(i)->GetObject<NrUeNetDevice>();
+        if (!ueDevice || ueDevice->GetCellId() != this->GetCellId())
+          continue;
 
-    if (traceFile.is_open()) {
-        // If the file is empty, write the header
-        static bool headerWritten = false;
-        if (!headerWritten && traceFile.tellp() == 0) {
-            traceFile << "TS,IMSI,CELL_ID,SINR,RSRP,DL_TP,MCS,RI,CQI\n";
-            headerWritten = true;
+        Ptr<NrUePhy> uePhy = ueDevice->GetPhy(0);
+        if (!uePhy)
+          continue;
+
+        uePhy->ReportUeMeasurements();
+        double rsrp = uePhy->GetRsrp();
+        double sinr = uePhy->GetSINR();
+        double sinr_dB = 10 * log10(sinr);
+
+        // double dl_tp = uePhy->GetDLTP();
+        UeKpiInfo kpi = uePhy->GetUEkpi();
+
+        uint64_t ueImsi64 = ueDevice->GetImsi();
+        uint32_t ueImsi =
+            static_cast<uint32_t>(ueImsi64); // make types match your maps
+        double dl_tp = 0.0;
+
+        auto itTp = m_imsiToTp.find(ueImsi);
+        if (itTp != m_imsiToTp.end()) {
+          dl_tp = itTp->second;
+          itTp->second = 0.0; // OK: modifying via iterator
         }
 
-        std::unordered_map<uint64_t, UEStats> ueStatsMap;
-
-        for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End();
-             ++it) {
-            Ptr<Node> node = *it;
-            for (uint32_t i = 0; i < node->GetNDevices(); ++i) {
-                Ptr<NrUeNetDevice> ueDevice =
-                    node->GetDevice(i)->GetObject<NrUeNetDevice>();
-                if (!ueDevice || ueDevice->GetCellId() != this->GetCellId())
-                    continue;
-
-                Ptr<NrUePhy> uePhy = ueDevice->GetPhy(0);
-                if (!uePhy)
-                    continue;
-
-                uePhy->ReportUeMeasurements();
-                double rsrp = uePhy->GetRsrp();
-                double sinr = uePhy->GetSINR();
-                double sinr_dB = 10 * log10(sinr);
-
-                double dl_tp = uePhy->GetDLTP();
-                Ptr<NrDlCqiMessage> cqiMsg = uePhy->GetMIMOkpi();
-                uint64_t imsi = ueDevice->GetImsi();
-
-                UEStats &stats = ueStatsMap[imsi];
-                stats.IMSI = imsi;
-                stats.SINR = sinr_dB;
-                stats.RSRP = rsrp;
-                stats.dl_tp = dl_tp;
-
-                if (cqiMsg) {
-                    DlCqiInfo cqiInfo = cqiMsg->GetDlCqi();
-                    stats.mcs = cqiInfo.m_mcs;
-                    stats.ri = cqiInfo.m_ri;
-                    stats.cqi = cqiInfo.m_wbCqi;
-                    stats.MIMO_enabled = true;
-                }
-            }
+        UEStats &stats = ueStatsMap[ueImsi64];
+        stats.IMSI = ueImsi64;
+        stats.SINR = sinr_dB;
+        stats.RSRP = rsrp;
+        stats.dl_tp = dl_tp;
+        stats.mcs = kpi.mcs;
+        stats.ri = kpi.ri;
+        stats.cqi = kpi.cqi;
+        if (dl_tp != 0) {
+          stats.tp_ongoing = 1;
         }
-
-        // ✅ Logging outside the loop to avoid duplication
-        for (auto &pair : ueStatsMap) {
-            UEStats &stats = pair.second;
-            if (stats.MIMO_enabled) {
-                NS_LOG_UNCOND("UE stats-> UE "
-                              << stats.IMSI << " : Serving cell " << this->GetCellId()
-                              << " | SINR: " << std::fixed << std::setprecision(1) << stats.SINR << " dB" // One decimal for SINR
-                              << " | RSRP: " << std::fixed << std::setprecision(0) << stats.RSRP << " dBm" // No decimal for RSRP as per example
-                              << " | DL TP: " << std::fixed << std::setprecision(1) << stats.dl_tp << " Mbps" // One decimal for DL TP
-                              << " | MCS: " << static_cast<uint32_t>(stats.mcs)
-                              << " | RI: " << static_cast<uint32_t>(stats.ri)
-                              << " | CQI: " << static_cast<uint32_t>(stats.cqi));
-                traceFile << Simulator::Now().GetSeconds() << "," << stats.IMSI << ","
-                          << this->GetCellId() << "," << std::fixed << std::setprecision(2) << stats.SINR << "," // 2 decimals for CSV
-                          << std::fixed << std::setprecision(2) << stats.RSRP << "," // 2 decimals for CSV
-                          << std::fixed << std::setprecision(2) << stats.dl_tp << "," // 2 decimals for CSV
-                          << static_cast<uint32_t>(stats.mcs) << ","
-                          << static_cast<uint32_t>(stats.ri) << ","
-                          << static_cast<uint32_t>(stats.cqi) << "\n";
-            } else {
-                NS_LOG_UNCOND("UE stats-> UE "
-                              << stats.IMSI << " : Serving cell " << this->GetCellId()
-                              << " | SINR: " << std::fixed << std::setprecision(1) << stats.SINR << " dB"
-                              << " | RSRP: " << std::fixed << std::setprecision(0) << stats.RSRP << " dBm"
-                              << " | DL TP: " << std::fixed << std::setprecision(1) << stats.dl_tp << " Mbps");
-                traceFile << Simulator::Now().GetSeconds() << "," << stats.IMSI << ","
-                          << this->GetCellId() << "," << std::fixed << std::setprecision(2) << stats.SINR << ","
-                          << std::fixed << std::setprecision(2) << stats.RSRP << ","
-                          << std::fixed << std::setprecision(2) << stats.dl_tp << "\n";
-            }
-            stats.MIMO_enabled = false;
-        }
-        traceFile.close();
-    } else {
-        std::cerr << "Error opening file for writing: " << ue_kpi_file.str()
-                  << std::endl;
+      }
     }
 
-    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::UE_KPI_tracker, this);
-    std::cout << "---------------------------------------------\n";
+    // ✅ Logging outside the loop to avoid duplication
+    for (auto &pair : ueStatsMap) {
+      UEStats &stats = pair.second;
+
+      if (stats.tp_ongoing) {
+        NS_LOG_UNCOND("UE stats-> UE "
+                      << stats.IMSI << " : Serving cell " << this->GetCellId()
+                      << " | SINR: " << std::fixed << std::setprecision(1)
+                      << stats.SINR << " dB" // One decimal for SINR
+                      << " | RSRP: " << std::fixed << std::setprecision(0)
+                      << stats.RSRP
+                      << " dBm" // No decimal for RSRP as per example
+                      << " | DL TP: " << std::fixed << std::setprecision(1)
+                      << stats.dl_tp << " Mbps" // One decimal for DL TP
+                      << " | MCS: " << static_cast<uint32_t>(stats.mcs)
+                      << " | RI: " << static_cast<uint32_t>(stats.ri)
+                      << " | CQI: " << static_cast<uint32_t>(stats.cqi));
+        traceFile << Simulator::Now().GetSeconds() << "," << stats.IMSI << ","
+                  << this->GetCellId() << "," << std::fixed
+                  << std::setprecision(2) << stats.SINR
+                  << "," // 2 decimals for CSV
+                  << std::fixed << std::setprecision(2) << stats.RSRP
+                  << "," // 2 decimals for CSV
+                  << std::fixed << std::setprecision(2) << stats.dl_tp
+                  << "," // 2 decimals for CSV
+                  << static_cast<uint32_t>(stats.mcs) << ","
+                  << static_cast<uint32_t>(stats.ri) << ","
+                  << static_cast<uint32_t>(stats.cqi) << "\n";
+        if (report_to_db) {
+          std::ostringstream payload;
+          payload << "ue_stats,ue=" << stats.IMSI
+                  << " serving_cell=" << this->GetCellId()
+                  << ",sinr=" << stats.SINR
+                  << ",rsrp=" << stats.RSRP
+                  << ",dl_tp=" << stats.dl_tp
+                  << ",mcs=" << static_cast<uint32_t>(stats.mcs)
+                  << ",ri=" << static_cast<uint32_t>(stats.ri)
+                  << ",cqi=" << static_cast<uint32_t>(stats.cqi)
+                  << " " << current_sim_time;  // <-- Influx timestamp in ns
+
+          SendToInfluxDB(payload.str());
+        }
+      } else {
+        NS_LOG_UNCOND("UE stats-> UE "
+                      << stats.IMSI << " : Serving cell " << this->GetCellId()
+                      << " | SINR: " << std::fixed << std::setprecision(1)
+                      << stats.SINR << " dB"
+                      << " | RSRP: " << std::fixed << std::setprecision(0)
+                      << stats.RSRP << " dBm"
+                      << " | DL TP: " << std::fixed << std::setprecision(1)
+                      << stats.dl_tp << " Mbps");
+        traceFile << Simulator::Now().GetSeconds() << "," << stats.IMSI << ","
+                  << this->GetCellId() << "," << std::fixed
+                  << std::setprecision(2) << stats.SINR << "," << std::fixed
+                  << std::setprecision(2) << stats.RSRP << "," << std::fixed
+                  << std::setprecision(2) << stats.dl_tp << "\n";
+        if (report_to_db) {
+          std::ostringstream payload;
+          payload << "ue_stats,ue=" << stats.IMSI
+                  << " serving_cell=" << this->GetCellId()
+                  << ",sinr=" << stats.SINR << ",rsrp=" << stats.RSRP
+                  << ",dl_tp=" << stats.dl_tp << ",mcs=" << 0 << ",ri=" << 0
+                  << ",cqi=" << 0
+                  << " " << current_sim_time;  // <-- Influx timestamp in ns
+          SendToInfluxDB(payload.str());
+        }
+      }
+      stats.tp_ongoing = false;
+    }
+    traceFile.close();
+  } else {
+    std::cerr << "Error opening file for writing: " << ue_kpi_file.str()
+              << std::endl;
+  }
+
+  NS_LOG_UNCOND( "---------------------------------------------\n");
 }
-
 
 } // namespace ns3
