@@ -273,6 +273,8 @@ class NrBearerStatsCalculator : public NrBearerStatsBase
      * return DL output file name
      */
     std::string GetDlOutputFilename();
+   
+    void ResetResultsForImsiLcid (uint64_t imsi, uint16_t lcid);
 
   private:
     /**

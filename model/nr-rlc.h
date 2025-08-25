@@ -122,7 +122,18 @@ class NrRlc : public Object // SimpleRefCount<NrRlc>
 
     /// \todo MRE What is the sense to duplicate all the interfaces here???
     // NB to avoid the use of multiple inheritance
+          uint32_t GetTxBytesInReportingPeriod() const {
+      return m_txBytesInReportingPeriod;
+    }
 
+    uint32_t GetTxPacketsInReportingPeriod() const {
+      return m_txPacketsInReportingPeriod;
+    }
+
+    void ResetRlcCounters () {
+      m_txBytesInReportingPeriod = 0;
+      m_txPacketsInReportingPeriod = 0;
+    }
   protected:
     // Interface forwarded by NrRlcSapProvider
     /**
@@ -158,6 +169,8 @@ class NrRlc : public Object // SimpleRefCount<NrRlc>
 
     uint16_t m_rnti; ///< RNTI
     uint8_t m_lcid;  ///< LCID
+    uint32_t m_txPacketsInReportingPeriod;
+    uint32_t m_txBytesInReportingPeriod;
     uint16_t m_packetDelayBudgetMs{
         UINT16_MAX}; //!< the packet delay budget in ms of the corresponding logical channel
 

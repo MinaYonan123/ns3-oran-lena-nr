@@ -75,7 +75,9 @@ NrRlc::NrRlc()
     : m_rlcSapUser(nullptr),
       m_macSapProvider(nullptr),
       m_rnti(0),
-      m_lcid(0)
+      m_lcid(0),
+      m_txPacketsInReportingPeriod(0),
+      m_txBytesInReportingPeriod(0)
 {
     NS_LOG_FUNCTION(this);
     m_rlcSapProvider = new NrRlcSpecificNrRlcSapProvider<NrRlc>(this);

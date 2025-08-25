@@ -201,6 +201,8 @@ class NrUeManager : public Object
      */
     NrRrcSap::RrcConnectionReconfiguration GetRrcConnectionReconfigurationForHandover(
         uint8_t componentCarrierId);
+    std::map <uint8_t, Ptr<NrDataRadioBearerInfo>> GetDrbMap () const;
+    // std::map <uint8_t, Ptr<NrDataRadioBearerInfo>> GetRlcMap () const;
 
     /**
      * Send a data packet over the appropriate Data Radio Bearer.
@@ -1404,6 +1406,8 @@ class NrGnbRrc : public Object
      * \return the current SRS periodicity
      */
     uint32_t GetSrsPeriodicity() const;
+    
+    std::map<uint16_t, Ptr<NrUeManager>> GetUeMap() const;
 
     /**
      * \brief Associate this RRC entity with a particular CSG information.
@@ -1534,7 +1538,6 @@ class NrGnbRrc : public Object
     uint16_t m_ulBandwidth;
     /// Last allocated RNTI
     uint16_t m_lastAllocatedRnti;
-
     /// The System Information Block Type 1 that is currently broadcasted over BCH.
     std::vector<NrRrcSap::SystemInformationBlockType1> m_sib1;
 
@@ -1727,6 +1730,7 @@ class NrGnbRrc : public Object
 
     std::map<uint8_t, Ptr<BandwidthPartGnb>>
         m_componentCarrierPhyConf; ///< component carrier phy configuration
+    uint32_t GetNumberOfConnectedUes() const;
 
 }; // end of `class NrGnbRrc`
 
