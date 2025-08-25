@@ -148,9 +148,16 @@ void
 NrRlcAm::DoTransmitPdcpPdu(Ptr<Packet> p)
 {
     NS_LOG_FUNCTION(this << m_rnti << (uint32_t)m_lcid << p->GetSize());
+    ++m_txPacketsInReportingPeriod;
+    m_txBytesInReportingPeriod += p->GetSize();
 
     if (m_txonBufferSize + p->GetSize() <= m_maxTxBufferSize || (m_maxTxBufferSize == 0))
-    {
+    {   
+        /** Store arrival time */
+            Time now = Simulator::Now();
+            NrRlcTag timeTag(now);
+            p->AddPacketTag(timeTag);
+        NS_LOG_LOGIC("Adding RLC Tag with time " << now);
         /** Store PDCP PDU */
         NrRlcSduStatusTag tag;
         tag.SetStatus(NrRlcSduStatusTag::FULL_SDU);
@@ -171,7 +178,11 @@ NrRlcAm::DoTransmitPdcpPdu(Ptr<Packet> p)
         NS_LOG_LOGIC("packet size     = " << p->GetSize());
         m_txDropTrace(p);
     }
-
+    /** Store arrival time */
+            Time now = Simulator::Now();
+            NrRlcTag timeTag(now);
+            p->AddPacketTag(timeTag);
+    NS_LOG_LOGIC("Adding RLC Tag with time " << now);
     /** Report Buffer Status */
     DoReportBufferStatus();
     m_rbsTimer.Cancel();

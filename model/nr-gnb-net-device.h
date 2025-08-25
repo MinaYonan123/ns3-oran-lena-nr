@@ -7,13 +7,18 @@
 
 #include "nr-fh-control.h"
 #include "nr-net-device.h"
+#include "ns3/nstime.h"
+#include <vector>
+#include <functional>
+#include <map>
 
 #include "ns3/traced-callback.h"
+#include "ns3/nr-bearer-stats-calculator.h"
+#include "nr-radio-bearer-info.h"
 #include <ns3/oran-interface.h>
-
+#include "E2SM-KPM-ActionDefinition.h"
 #include "ns3/flow-monitor-module.h"     // for Ptr<FlowMonitor>
 #include "ns3/ipv4-flow-classifier.h"    // for Ptr<Ipv4FlowClassifier>
-
 namespace ns3
 {
 
@@ -34,6 +39,12 @@ class NrMacScheduler;
  *
  * This class represent the GNB NetDevice.
  */
+bool lessThan(int x, int y);
+bool greaterThan(int x, int y);
+bool equal(int x, int y);
+
+  // Declare the MATH_CALL_BACKS vector
+extern std::vector<std::function<bool(int, int)>> MATH_CALL_BACKS;
 class NrGnbNetDevice : public NrNetDevice
 {
   public:
@@ -178,19 +189,30 @@ class NrGnbNetDevice : public NrNetDevice
     void SampleThroughput(Ptr<FlowMonitor> monitor,
                           Ptr<Ipv4FlowClassifier> classifier,
                           double intervalSec);
+    std::string GetImsiString(uint64_t imsi);
+    void BuildAndSendReportMessage (E2Termination::RicSubscriptionRequest_rval_s params);
+    Ptr<KpmIndicationMessage> BuildRicIndicationMessageCuUp(std::string plmId);
+    void SetE2Termination(Ptr<E2Termination> e2term); //// Added to set the E2 termination object
+    Ptr<E2Termination> GetE2Termination() const; //// Added to get the E2 termination object
+    void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle KPM subscription requests
+    void ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle control messages
+    void stopSendingAndCancelSchedule();  //// Added to stop sending messages and cancel schedule
+    void CheckReportingFlag (void);
+    bool m_forceE2FileLogging;  //// A flag to force E2 file logging
+    bool m_reducedPmValues; //< if true use a reduced subset of pmvalues
+    double m_e2Periodicity;
+    bool m_is_reported = false;
+    bool m_hasValidSubscription ;
+    bool m_sendCuUp;
+    std::string m_cuUpFileName;
 
-    void SetE2Termination(Ptr<E2Termination> e2term);
-    Ptr<E2Termination> GetE2Termination() const;
-    void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu);
-    void ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu);
-    void stopSendingAndCancelSchedule();
-    bool m_forceE2FileLogging;
-    
   protected:
     void DoInitialize() override;
 
     void DoDispose() override;
     bool DoSend(Ptr<Packet> packet, const Address& dest, uint16_t protocolNumber) override;
+    void SetStartTime (uint64_t); ////Added to set the start time 
+
 
   private:
     Ptr<NrGnbRrc> m_rrc;
@@ -202,10 +224,10 @@ class NrGnbNetDevice : public NrNetDevice
     Ptr<NrGnbComponentCarrierManager>
         m_componentCarrierManager; ///< the component carrier manager of this gNB
     Ptr<NrFhControl> m_nrFhControl;
-    Ptr<E2Termination> m_e2term;
-    double  rc_e2_func_id ; // to RC
+    Ptr<E2Termination> m_e2term;  /// A pointer to the E2 termination object
+    double  rc_e2_func_id ; // to RC  function id
     double e2_func_id; //to pass kpm function id
-    bool m_stopSendingMessages;
+    bool m_stopSendingMessages; 
     bool m_isReportingEnabled;
 
     //trace nr kpis
@@ -222,6 +244,15 @@ class NrGnbNetDevice : public NrNetDevice
     std::map<uint32_t, double> m_imsiToJitter;
     std::map<uint32_t, double> m_imsiToPacketLoss;
     uint32_t m_nextImsiIndex = 1;
+    uint64_t m_startTime;///// Added to set the start time
+    Time m_checkPeriod;
+    Ptr<NrBearerStatsCalculator> m_e2PdcpStatsCalculator;
+    E2Termination::RicSubscriptionRequest_rval_s m_lastSubscriptionParams;
+    Ptr<KpmIndicationHeader> BuildRicIndicationHeader(std::string plmId, std::string gnbId, uint16_t nrCellId); //// Added to build the KPM indication header
+    
+
+
+
 };
 
 } // namespace ns3
