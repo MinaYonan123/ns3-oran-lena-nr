@@ -25,6 +25,15 @@ class BeamManager;
 class BeamId;
 class NrUePowerControl;
 
+struct UeKpiInfo
+{
+  uint16_t rnti; ///< Radio Network Temporary Identifier
+  uint8_t  cqi;  ///< Channel Quality Indicator
+  uint8_t  mcs;  ///< Modulation and Coding Scheme
+  uint8_t  ri;   ///< Rank Indicator
+};
+
+
 /**
  * \ingroup ue-phy
  * \brief The UE PHY class
@@ -63,9 +72,16 @@ class NrUePhy : public NrPhy
 
   public:
     /**
-     * \brief Get the object TypeId
-     * \return the object type id
+     * \brief Layer-1 filtering of RSRP measurements and reporting to the RRC entity.
+     * For the moment we don't report to RRC but the function is prepared to be
+     * extended once RRC is ported.
+     *
+     * Initially executed at +0.200s, and then repeatedly executed with
+     * periodicity as indicated by the *UeMeasFilterPeriod* attribute.
      */
+
+    void ReportUeMeasurements();
+
     static TypeId GetTypeId();
 
     /**
@@ -123,7 +139,13 @@ class NrUePhy : public NrPhy
      * \brief Returns the latest measured RSRP value
      * Called by NrUePowerControl.
      */
+
+    double GetSINR() const;
     double GetRsrp() const;
+    double GetDLTP();
+    Ptr<NrDlCqiMessage> GetMIMOkpi() const;
+
+    UeKpiInfo GetUEkpi() const;
 
     /**
      * \brief Get NR uplink power control entity
@@ -473,15 +495,7 @@ class NrUePhy : public NrPhy
     uint32_t GetNumRbPerRbg() const override;
 
   private:
-    /**
-     * \brief Layer-1 filtering of RSRP measurements and reporting to the RRC entity.
-     * For the moment we don't report to RRC but the function is prepared to be
-     * extended once RRC is ported.
-     *
-     * Initially executed at +0.200s, and then repeatedly executed with
-     * periodicity as indicated by the *UeMeasFilterPeriod* attribute.
-     */
-    void ReportUeMeasurements();
+
 
     /**
      * \brief Compute the AvgSinr (copied from NrUePhy)
@@ -832,6 +846,7 @@ class NrUePhy : public NrPhy
     uint8_t m_ulCtrlSyms{1}; //!< Number of CTRL symbols in UL
 
     double m_rsrp{0}; //!< The latest measured RSRP value
+    double m_avg_rsrp = 0;
 
     /// Summary results of measuring a specific cell. Used for layer-1 filtering.
     struct UeMeasurementsElement
@@ -866,6 +881,8 @@ class NrUePhy : public NrPhy
     TracedCallback<uint16_t, uint16_t, double, uint16_t> m_dlCtrlSinrTrace;
     TracedCallback<uint64_t, uint64_t> m_reportUlTbSize; //!< Report the UL TBS
     TracedCallback<uint64_t, uint64_t> m_reportDlTbSize; //!< Report the DL TBS
+
+
     TracedCallback<const SfnSf&,
                    Ptr<const SpectrumValue>,
                    const Time&,
@@ -949,6 +966,14 @@ class NrUePhy : public NrPhy
     double m_sinrDbFrame;           ///< the average SINR per radio frame
     SpectrumValue m_ctrlSinrForRlf; ///< the CTRL SINR used for RLF detection
     bool m_enableRlfDetection;      ///< Flag to enable/disable RLF detection
+    uint8_t m_csiFeedbackType;      ///< CSI feedback type configured by NrHelper
+
+    double m_sinr_current; //for KPI tracking
+    double m_dl_tp;//for KPI tracking
+
+    std::vector<std::pair<double, uint64_t>> g_dlTbSizeForOneUe; //report for TP calculation
+    uint64_t t_last_TP_DL=0;//time for catching last TP calculation timestamp
+    mutable UeKpiInfo m_lastUeKpiInfo = {0, 0, 0, 0}; // In-class initializer
 };
 
 } // namespace ns3

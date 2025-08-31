@@ -93,8 +93,17 @@ class NrGnbPhy : public NrPhy
 
   public:
     /**
-     * \brief Get Type id
-     * \return the type id of the NrGnbPhy
+     * @brief CSI-RS model to be used
+     */
+    enum CsiRsModel
+    {
+        CSI_RS_PER_UE,  //!< CSI-RS per UE periodically
+        CSI_RS_PER_BEAM //!< CSI-RS per beam periodically
+    };
+
+    /**
+         * \brief Get Type id
+         * \return the type id of the NrGnbPhy
      */
     static TypeId GetTypeId();
 
@@ -412,6 +421,16 @@ class NrGnbPhy : public NrPhy
      * TODO change to private and add documentation
      */
     void ChangeToQuasiOmniBeamformingVector();
+
+
+    struct RbStats {
+      uint16_t cellId = 0;         // Cell ID
+      double prbUsagePercentage = 0; // PRB usage percentage
+      double averageLastRb= 0;    // Store the average value of the last RBG
+      int iterations = 0;
+    };
+
+    RbStats GetRBStats();
 
   protected:
     /**
@@ -833,6 +852,8 @@ class NrGnbPhy : public NrPhy
     bool m_isPrimary{false}; //!< Is this PHY a primary phy?
 
     Time m_lastBfChange; //!< Saves the timestamp when the beamforming vector changes.
+
+    mutable RbStats m_RbStats; // store RBStats
 };
 
 } // namespace ns3

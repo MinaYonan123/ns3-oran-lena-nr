@@ -46,6 +46,7 @@ NrUePhy::NrUePhy()
     m_powerControl = CreateObject<NrUePowerControl>(this);
     m_isConnected = false;
     Simulator::Schedule(m_ueMeasurementsFilterPeriod, &NrUePhy::ReportUeMeasurements, this);
+    t_last_TP_DL =  Simulator::Now().GetSeconds();
 }
 
 NrUePhy::~NrUePhy()
@@ -252,7 +253,71 @@ NrUePhy::GetTxPower() const
 double
 NrUePhy::GetRsrp() const
 {
-    return m_rsrp;
+  double tmp_m_rsrp = m_avg_rsrp;
+  //m_rsrp = -999;
+  return tmp_m_rsrp;
+}
+
+double
+NrUePhy::GetSINR() const
+{
+  double tmp_m_sinr_current;
+  tmp_m_sinr_current = m_sinr_current;
+  //m_sinr_current = -999;
+  return tmp_m_sinr_current;
+}
+
+double NrUePhy::GetDLTP()
+{
+  double windowDuration = Simulator::Now().GetSeconds() - t_last_TP_DL;
+  double windowStart = t_last_TP_DL;
+
+  uint64_t totalBytes = 0;
+
+ // NS_LOG_UNCOND("TP DEBUG -> Time now: " << Simulator::Now().GetSeconds()
+                                        // << ", Last TP time: " << t_last_TP_DL
+                                       //  << ", Window Duration: " << windowDuration);
+
+  for (auto &tb : g_dlTbSizeForOneUe) {
+  //  NS_LOG_UNCOND("TP DEBUG -> TB Timestamp: " << tb.first << ", Size: " << tb.second);
+    if (tb.first >= windowStart) {
+      totalBytes += tb.second;
+    }
+  }
+
+ // NS_LOG_UNCOND("TP DEBUG -> Total Bytes: " << totalBytes);
+
+  double throughput = (windowDuration > 0)
+                          ? (totalBytes * 8.0) / (windowDuration * 1e6)
+                          : 0;
+
+ // NS_LOG_UNCOND("TP DEBUG -> Throughput: " << throughput << " Mbps");
+
+  g_dlTbSizeForOneUe.clear();
+
+  return throughput;
+}
+
+/*
+Ptr<NrDlCqiMessage> NrUePhy::GetMIMOkpi() const
+{
+  Ptr<NrDlCqiMessage> prev = m_lastDlCqiMessage;
+  m_lastDlCqiMessage = nullptr;
+  return prev;
+}
+*/
+UeKpiInfo NrUePhy::GetUEkpi() const
+{
+  UeKpiInfo info = m_lastUeKpiInfo; // Directly access the struct
+  //m_lastUeKpiInfo({0, 0, 0, 0});
+  UeKpiInfo info0;
+  info0.rnti = 0;
+  info0.cqi  = 0;
+  info0.mcs  = 0;
+  info0.ri   = 1;
+
+  m_lastUeKpiInfo = info0;
+  return info;
 }
 
 Ptr<NrUePowerControl>
@@ -997,7 +1062,12 @@ NrUePhy::DlData(const std::shared_ptr<DciInfoElementTdma>& dci)
                                   dci->m_symStart,
                                   dci->m_numSym,
                                   m_currentSlot});
+    double now = Simulator::Now().GetSeconds(); // get current time
+    uint64_t tbSize = dci->m_tbSize; // or whatever tbSize you want to store
+
     m_reportDlTbSize(m_netDevice->GetObject<NrUeNetDevice>()->GetImsi(), dci->m_tbSize);
+    g_dlTbSizeForOneUe.push_back(std::make_pair(now, tbSize)); // store the data
+
     NS_LOG_INFO("UE" << m_rnti << " RXing DL DATA frame for symbols " << +dci->m_symStart << "-"
                      << +(dci->m_symStart + dci->m_numSym - 1) << " num of rbg assigned: "
                      << FromRBGBitmaskToRBAssignment(dci->m_rbgBitmask).size()
@@ -1184,6 +1254,17 @@ NrUePhy::CreateDlCqiFeedbackMessage(const SpectrumValue& sinr)
     std::vector<int> cqi;
     dlcqi.m_wbCqi = ComputeCqi(sinr);
     msg->SetDlCqi(dlcqi);
+
+    //m_cqiFeedbackTrace(m_rnti, dlcqi.m_wbCqi, dlcqi.m_mcs, 1);
+
+    UeKpiInfo info;
+    info.rnti = m_rnti;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = 1;
+
+    m_lastUeKpiInfo = info;
+
     return msg;
 }
 
@@ -1195,6 +1276,7 @@ NrUePhy::GenerateDlCqiReport(const SpectrumValue& sinr)
     if (m_ulConfigured && (m_rnti > 0) && m_receptionEnabled)
     {
         m_dlDataSinrTrace(GetCellId(), m_rnti, ComputeAvgSinr(sinr), GetBwpId());
+        m_sinr_current = ComputeAvgSinr(sinr);
 
         if (Simulator::Now() > m_wbCqiLast)
         {
@@ -1430,6 +1512,11 @@ NrUePhy::ReportUeMeasurements()
         NrUeCphySapUser::UeMeasurementsElement newEl;
         newEl.m_cellId = (*it).first;
         newEl.m_rsrp = avg_rsrp;
+        if (GetBwpId() == 0) {
+          m_avg_rsrp = avg_rsrp;
+         // NS_LOG_UNCOND("RSRP updated for bwp_id=0");
+        }
+
         newEl.m_rsrq = avg_rsrq; // LEAVE IT 0 FOR THE MOMENT
         ret.m_ueMeasurementsList.push_back(newEl);
         ret.m_componentCarrierId = GetBwpId();
@@ -1467,7 +1554,9 @@ NrUePhy::ReportDlCtrlSinr(const SpectrumValue& sinr)
     }
 
     NS_ASSERT(rbUsed);
+    m_sinr_current= sinrSum / rbUsed;
     m_dlCtrlSinrTrace(GetCellId(), m_rnti, sinrSum / rbUsed, GetBwpId());
+    //m_sinr_current = sinrSum / rbUsed;
 }
 
 uint8_t
@@ -1793,9 +1882,20 @@ NrUePhy::GenerateDlCqiReportMimo(const std::vector<MimoSignalChunk>& mimoChunks)
         .m_optPrecMat = cqi.m_optPrecMat,
     };
 
+    //m_cqiFeedbackTrace(m_rnti, cqi.m_wbCqi, cqi.m_mcs, cqi.m_rank);
+
+    UeKpiInfo info;
+    info.rnti = m_rnti;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = cqi.m_rank;
+
+    m_lastUeKpiInfo = info;
+
     auto msg = Create<NrDlCqiMessage>();
     msg->SetSourceBwp(GetBwpId());
     msg->SetDlCqi(dlcqi);
+
 
     DoSendControlMessage(msg);
 }
@@ -1836,5 +1936,6 @@ NrUePhy::GetPmSearch() const
 {
     return m_pmSearch;
 }
+
 
 } // namespace ns3
