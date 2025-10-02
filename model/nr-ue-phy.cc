@@ -252,7 +252,32 @@ NrUePhy::GetTxPower() const
 double
 NrUePhy::GetRsrp() const
 {
-    return m_rsrp;
+  double tmp_m_rsrp = m_avg_rsrp;
+  //m_rsrp = -999;
+  return tmp_m_rsrp;
+}
+
+double
+NrUePhy::GetSINR() const
+{
+  double tmp_m_sinr_current;
+  tmp_m_sinr_current = m_sinr_current;
+  //m_sinr_current = -999;
+  return tmp_m_sinr_current;
+}
+
+UeKpiInfo NrUePhy::GetUEkpi() const
+{
+  UeKpiInfo info = m_lastUeKpiInfo; // Directly access the struct
+  //m_lastUeKpiInfo({0, 0, 0, 0});
+  UeKpiInfo info0;
+  info0.rnti = 0;
+  info0.cqi  = 0;
+  info0.mcs  = 0;
+  info0.ri   = 1;
+
+  m_lastUeKpiInfo = info0;
+  return info;
 }
 
 Ptr<NrUePowerControl>
@@ -1184,6 +1209,15 @@ NrUePhy::CreateDlCqiFeedbackMessage(const SpectrumValue& sinr)
     std::vector<int> cqi;
     dlcqi.m_wbCqi = ComputeCqi(sinr);
     msg->SetDlCqi(dlcqi);
+
+    UeKpiInfo info;
+    info.rnti = m_rnti;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = 1;
+
+    m_lastUeKpiInfo = info;
+
     return msg;
 }
 
@@ -1430,6 +1464,11 @@ NrUePhy::ReportUeMeasurements()
         NrUeCphySapUser::UeMeasurementsElement newEl;
         newEl.m_cellId = (*it).first;
         newEl.m_rsrp = avg_rsrp;
+        if (GetBwpId() == 0) {
+          m_avg_rsrp = avg_rsrp;
+         // NS_LOG_UNCOND("RSRP updated for bwp_id=0");
+        }
+
         newEl.m_rsrq = avg_rsrq; // LEAVE IT 0 FOR THE MOMENT
         ret.m_ueMeasurementsList.push_back(newEl);
         ret.m_componentCarrierId = GetBwpId();
@@ -1467,6 +1506,7 @@ NrUePhy::ReportDlCtrlSinr(const SpectrumValue& sinr)
     }
 
     NS_ASSERT(rbUsed);
+    m_sinr_current= sinrSum / rbUsed;
     m_dlCtrlSinrTrace(GetCellId(), m_rnti, sinrSum / rbUsed, GetBwpId());
 }
 
@@ -1792,6 +1832,14 @@ NrUePhy::GenerateDlCqiReportMimo(const std::vector<MimoSignalChunk>& mimoChunks)
         .m_mcs = cqi.m_mcs,
         .m_optPrecMat = cqi.m_optPrecMat,
     };
+
+    UeKpiInfo info;
+    info.rnti = m_rnti;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = cqi.m_rank;
+
+    m_lastUeKpiInfo = info;
 
     auto msg = Create<NrDlCqiMessage>();
     msg->SetSourceBwp(GetBwpId());
