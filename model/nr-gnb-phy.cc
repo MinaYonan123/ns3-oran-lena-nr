@@ -502,6 +502,7 @@ NrGnbPhy::StartEventLoop(uint16_t frame, uint8_t subframe, uint16_t slot)
                  << "\t Channel bandwidth: " << GetChannelBandwidth() << " Hz" << std::endl
                  << "\t Channel central freq: " << GetCentralFrequency() << " Hz" << std::endl
                  << "\t Num. RB: " << GetRbNum());
+
     SfnSf startSlot(frame, subframe, slot, GetNumerology());
     InitializeMessageList();
     StartSlot(startSlot);
@@ -1024,6 +1025,7 @@ NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo& allocInfo) const
     m_RbStats = rbStats;
 }
 
+
 void
 NrGnbPhy::DoStartSlot()
 {
@@ -1091,6 +1093,23 @@ NrGnbPhy::PrepareRbgAllocationMap(const std::deque<VarTtiAllocInfo>& allocations
 
     m_rbgAllocationPerSymDataStat.clear();
 }
+NrGnbPhy::RbStats NrGnbPhy::GetRBStats() {
+
+    RbStats rbStats_temp = {0};
+
+    rbStats_temp.cellId = m_RbStats.cellId;
+    rbStats_temp.prbUsagePercentage =
+        m_RbStats.prbUsagePercentage / m_RbStats.iterations;
+    rbStats_temp.averageLastRb = m_RbStats.averageLastRb / m_RbStats.iterations;
+    // NS_LOG_UNCOND("PRB_Usage(%)=" << rbStats_temp.prbUsagePercentage);
+
+    m_RbStats.prbUsagePercentage = 0;
+    m_RbStats.averageLastRb = 0;
+    m_RbStats.iterations = 0;
+
+    return rbStats_temp;
+}
+
 NrGnbPhy::RbStats NrGnbPhy::GetRBStats() {
 
     RbStats rbStats_temp = {0};

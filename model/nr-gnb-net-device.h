@@ -206,12 +206,43 @@ class NrGnbNetDevice : public NrNetDevice
     bool m_sendCuUp;
     std::string m_cuUpFileName;
 
+    struct CellStats {
+        uint16_t cellId = 0;         // Cell ID
+        double prbUsagePercentage = 0; // PRB usage percentage
+        double averageLastRb= 0;    // Store the average value of the last RBG
+    };
+
+    struct UEStats {
+        uint64_t IMSI;
+        double SINR = 0;       // dB
+        double RSRP = 0;       // dBm
+        double dl_tp = 0;      // Mbps
+        bool tp_ongoing = false;
+        uint8_t mcs = 0;
+        uint8_t ri  = 0;
+        uint8_t cqi = 0;
+        double pktLoss = 0.0;  // Packet loss ratio [0..1]
+        double delay   = 0.0;  // Mean delay [ms]
+        double jitter  = 0.0;  // Mean jitter [ms]
+        int cell_id = 0;
+    };
+
+    void Cell_KPI_tracker();
+
+    void UE_KPI_tracker();
+
+    void SetFlowMonitor(ns3::Ptr<ns3::FlowMonitor> monitor);
+    void SetIpv4FlowClassifier(ns3::Ptr<ns3::Ipv4FlowClassifier> classifier);
+    void SampleThroughput(Ptr<FlowMonitor> monitor,
+                          Ptr<Ipv4FlowClassifier> classifier,
+                          double intervalSec);
+
   protected:
     void DoInitialize() override;
 
     void DoDispose() override;
     bool DoSend(Ptr<Packet> packet, const Address& dest, uint16_t protocolNumber) override;
-    void SetStartTime (uint64_t); ////Added to set the start time 
+    void SetStartTime (uint64_t); ////Added to set the start time
 
 
   private:
@@ -227,7 +258,7 @@ class NrGnbNetDevice : public NrNetDevice
     Ptr<E2Termination> m_e2term;  /// A pointer to the E2 termination object
     double  rc_e2_func_id ; // to RC  function id
     double e2_func_id; //to pass kpm function id
-    bool m_stopSendingMessages; 
+    bool m_stopSendingMessages;
     bool m_isReportingEnabled;
 
     //trace nr kpis
@@ -249,8 +280,21 @@ class NrGnbNetDevice : public NrNetDevice
     Ptr<NrBearerStatsCalculator> m_e2PdcpStatsCalculator;
     E2Termination::RicSubscriptionRequest_rval_s m_lastSubscriptionParams;
     Ptr<KpmIndicationHeader> BuildRicIndicationHeader(std::string plmId, std::string gnbId, uint16_t nrCellId); //// Added to build the KPM indication header
-    
 
+
+    bool m_isCellConfigured{false}; ///< variable to check whether the RRC has been configured
+    uint64_t sim_id;
+    bool report_to_db = false;
+
+    ns3::Ptr<ns3::FlowMonitor> m_flowMonitor;            // store monitor if needed
+    ns3::Ptr<ns3::Ipv4FlowClassifier> m_flowClassifier; // store classifier
+    std::map<ns3::FlowId, uint64_t> m_prevRxBytes;
+    std::map<ns3::FlowId, uint32_t> m_flowIdToImsi; // map FlowId -> IMSI index (1..N)
+    std::map<uint32_t, double> m_imsiToTp;         // map IMSI -> last throughput (Mbps)
+    std::map<uint32_t, double> m_imsiToDelay;
+    std::map<uint32_t, double> m_imsiToJitter;
+    std::map<uint32_t, double> m_imsiToPacketLoss;
+    uint32_t m_nextImsiIndex = 1;
 
 
 };

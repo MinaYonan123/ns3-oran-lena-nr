@@ -265,7 +265,32 @@ NrUePhy::GetTxPower() const
 double
 NrUePhy::GetRsrp() const
 {
-    return m_rsrp;
+  double tmp_m_rsrp = m_avg_rsrp;
+  //m_rsrp = -999;
+  return tmp_m_rsrp;
+}
+
+double
+NrUePhy::GetSINR() const
+{
+  double tmp_m_sinr_current;
+  tmp_m_sinr_current = m_sinr_current;
+  //m_sinr_current = -999;
+  return tmp_m_sinr_current;
+}
+
+UeKpiInfo NrUePhy::GetUEkpi() const
+{
+  UeKpiInfo info = m_lastUeKpiInfo; // Directly access the struct
+  //m_lastUeKpiInfo({0, 0, 0, 0});
+  UeKpiInfo info0;
+  info0.rnti = 0;
+  info0.cqi  = 0;
+  info0.mcs  = 0;
+  info0.ri   = 1;
+
+  m_lastUeKpiInfo = info0;
+  return info;
 }
 
 double
@@ -1278,62 +1303,14 @@ NrUePhy::CreateDlCqiFeedbackMessage(const SpectrumValue& sinr)
     dlcqi.m_wbCqi = m_amc->CreateCqiFeedbackWbTdma(sinr, dlcqi.m_mcs);
 
     msg->SetDlCqi(dlcqi);
-    m_cqiFeedbackTrace(m_rnti, dlcqi.m_wbCqi, dlcqi.m_mcs, 1);
 
-    // === Store latest KPI values ===
     UeKpiInfo info;
     info.rnti = m_rnti;
-    info.cqi = dlcqi.m_wbCqi;
-    info.mcs = dlcqi.m_mcs;
-    info.ri = 1;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = 1;
+
     m_lastUeKpiInfo = info;
-
-    // === Accumulate for averaging ===
-    m_ueKpiAcc.cqiSum += dlcqi.m_wbCqi;
-    m_ueKpiAcc.mcsSum += dlcqi.m_mcs;
-    m_ueKpiAcc.riSum += 1;
-    m_ueKpiAcc.count++;
-
-    // NS_LOG_UNCOND("--------SISO_CQI_REPORT-----");
-
-    auto it = traceFiles.find(m_imsi);
-    if (it == traceFiles.end())
-    {
-        std::string folderName = "trace_phy";
-        if (!std::filesystem::exists(folderName))
-        {
-            std::filesystem::create_directory(folderName);
-        }
-
-        std::stringstream fileName;
-        fileName << folderName << "/UE_" << m_imsi << "_phy_cqi_siso.csv";
-
-        std::ofstream file(fileName.str(), std::ios::out | std::ios::app);
-        if (!file.is_open())
-        {
-            NS_LOG_UNCOND("Failed to open CQI trace file for UE " << m_imsi);
-        }
-        traceFiles[m_imsi] = std::move(file);
-        it = traceFiles.find(m_imsi);
-    }
-
-    std::ofstream& traceFile = it->second;
-
-    if (headerWritten.find(m_imsi) == headerWritten.end() && traceFile.is_open())
-    {
-        traceFile << "Time(s),UE_IMSI,UE_RNTI,CQI,MCS,RI,Mode\n";
-        headerWritten.insert(m_imsi);
-    }
-
-    if (traceFile.is_open())
-    {
-        traceFile << std::fixed << std::setprecision(3) << Simulator::Now().GetSeconds() << ","
-                  << m_imsi << "," << m_rnti << "," << static_cast<uint16_t>(dlcqi.m_wbCqi) << ","
-                  << static_cast<uint16_t>(dlcqi.m_mcs) << "," << 1 << ","
-                  << "SISO"
-                  << "\n";
-        traceFile.flush();
-    }
 
     return msg;
 }
@@ -1581,11 +1558,11 @@ NrUePhy::ReportUeMeasurements()
         NrUeCphySapUser::UeMeasurementsElement newEl;
         newEl.m_cellId = (*it).first;
         newEl.m_rsrp = avg_rsrp;
-        if (GetBwpId() == 0)
-        {
-            m_avg_rsrp = avg_rsrp;
-            // NS_LOG_UNCOND("RSRP updated for bwp_id=0");
+        if (GetBwpId() == 0) {
+          m_avg_rsrp = avg_rsrp;
+         // NS_LOG_UNCOND("RSRP updated for bwp_id=0");
         }
+
         newEl.m_rsrq = avg_rsrq; // LEAVE IT 0 FOR THE MOMENT
         ret.m_ueMeasurementsList.push_back(newEl);
         ret.m_componentCarrierId = GetBwpId();
@@ -1623,12 +1600,8 @@ NrUePhy::ReportDlCtrlSinr(const SpectrumValue& sinr)
     }
 
     NS_ASSERT(rbUsed);
-    m_sinr_current = sinrSum / rbUsed;
-
-    // Update cumulative average
-    m_sinrAccum += m_sinr_current;
-    m_sinrCount++;
-    m_dlCtrlSinrTrace(GetCellId(), m_rnti, m_sinr_current, GetBwpId());
+    m_sinr_current= sinrSum / rbUsed;
+    m_dlCtrlSinrTrace(GetCellId(), m_rnti, sinrSum / rbUsed, GetBwpId());
 }
 
 uint8_t
@@ -1988,19 +1961,13 @@ NrUePhy::GenerateDlCqiReportMimo(const std::vector<MimoSignalChunk>& mimoChunks)
         .m_optPrecMat = cqi.m_optPrecMat,
     };
 
-    // === Update latest KPIs ===
     UeKpiInfo info;
     info.rnti = m_rnti;
-    info.cqi = dlcqi.m_wbCqi;
-    info.mcs = dlcqi.m_mcs;
-    info.ri = dlcqi.m_ri;
-    m_lastUeKpiInfo = info;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = cqi.m_rank;
 
-    // === Accumulate for averaging ===
-    m_ueKpiAcc.cqiSum += dlcqi.m_wbCqi;
-    m_ueKpiAcc.mcsSum += dlcqi.m_mcs;
-    m_ueKpiAcc.riSum += dlcqi.m_ri;
-    m_ueKpiAcc.count++;
+    m_lastUeKpiInfo = info;
 
     auto msg = Create<NrDlCqiMessage>();
     msg->SetSourceBwp(GetBwpId());
