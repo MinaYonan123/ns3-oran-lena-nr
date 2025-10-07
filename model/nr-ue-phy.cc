@@ -29,11 +29,20 @@
 #include <algorithm>
 #include <cfloat>
 
-namespace ns3
-{
+#include <fstream>
+#include <iomanip>
+#include <filesystem>
 
-const Time NR_DEFAULT_PMI_INTERVAL_WB{MilliSeconds(10)}; // Wideband PMI update interval
-const Time NR_DEFAULT_PMI_INTERVAL_SB{MilliSeconds(2)};  // Subband PMI update interval
+// === CSV trace to file (per UE, using IMSI) ===
+static std::map<uint64_t, std::ofstream> traceFiles;
+static std::set<uint64_t> headerWritten;
+
+double m_sinrAccum = 0.0;
+uint64_t m_sinrCount = 0;
+
+namespace ns3 {
+    const Time NR_DEFAULT_PMI_INTERVAL_WB{MilliSeconds(10)}; // Wideband PMI update interval
+    const Time NR_DEFAULT_PMI_INTERVAL_SB{MilliSeconds(2)}; // Subband PMI update interval
 
 NS_LOG_COMPONENT_DEFINE("NrUePhy");
 NS_OBJECT_ENSURE_REGISTERED(NrUePhy);
@@ -252,8 +261,45 @@ NrUePhy::GetTxPower() const
 double
 NrUePhy::GetRsrp() const
 {
-    return m_rsrp;
+  double tmp_m_rsrp = m_avg_rsrp;
+  //m_rsrp = -999;
+  return tmp_m_rsrp;
 }
+
+    double
+    NrUePhy::GetSINR() const {
+        if (m_sinrCount == 0)
+            return m_sinr_current;
+
+        double tmp_sinr_return = m_sinrAccum / m_sinrCount;
+        m_sinrAccum = 0.0;
+        m_sinrCount = 0;
+        return tmp_sinr_return;
+    }
+
+    UeKpiInfo
+    NrUePhy::GetUEkpi() const {
+        UeKpiInfo info;
+
+        if (m_ueKpiAcc.count > 0) {
+            info.rnti = m_lastUeKpiInfo.rnti;
+            info.cqi = static_cast<uint8_t>(m_ueKpiAcc.cqiSum / m_ueKpiAcc.count);
+            info.mcs = static_cast<uint8_t>(m_ueKpiAcc.mcsSum / m_ueKpiAcc.count);
+            info.ri = static_cast<uint8_t>(m_ueKpiAcc.riSum / m_ueKpiAcc.count);
+        } else {
+            // no data yet
+            info.rnti = m_lastUeKpiInfo.rnti;
+            info.cqi = 0;
+            info.mcs = 0;
+            info.ri = 1;
+        }
+
+        // === Reset accumulators after retrieval (optional) ===
+        const_cast<NrUePhy *>(this)->m_ueKpiAcc = {};
+        const_cast<NrUePhy *>(this)->m_lastUeKpiInfo = {};
+
+        return info;
+    }
 
 Ptr<NrUePowerControl>
 NrUePhy::GetUplinkPowerControl() const
@@ -1184,8 +1230,24 @@ NrUePhy::CreateDlCqiFeedbackMessage(const SpectrumValue& sinr)
     std::vector<int> cqi;
     dlcqi.m_wbCqi = ComputeCqi(sinr);
     msg->SetDlCqi(dlcqi);
-    return msg;
-}
+
+    UeKpiInfo info;
+    info.rnti = m_rnti;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = 1;
+
+    m_lastUeKpiInfo = info;
+
+        // === Accumulate for averaging ===
+        m_ueKpiAcc.cqiSum += dlcqi.m_wbCqi;
+        m_ueKpiAcc.mcsSum += dlcqi.m_mcs;
+        m_ueKpiAcc.riSum += 1;
+        m_ueKpiAcc.count++;
+
+
+        return msg;
+    }
 
 void
 NrUePhy::GenerateDlCqiReport(const SpectrumValue& sinr)
@@ -1430,6 +1492,11 @@ NrUePhy::ReportUeMeasurements()
         NrUeCphySapUser::UeMeasurementsElement newEl;
         newEl.m_cellId = (*it).first;
         newEl.m_rsrp = avg_rsrp;
+        if (GetBwpId() == 0) {
+          m_avg_rsrp = avg_rsrp;
+         // NS_LOG_UNCOND("RSRP updated for bwp_id=0");
+        }
+
         newEl.m_rsrq = avg_rsrq; // LEAVE IT 0 FOR THE MOMENT
         ret.m_ueMeasurementsList.push_back(newEl);
         ret.m_componentCarrierId = GetBwpId();
@@ -1467,6 +1534,7 @@ NrUePhy::ReportDlCtrlSinr(const SpectrumValue& sinr)
     }
 
     NS_ASSERT(rbUsed);
+    m_sinr_current= sinrSum / rbUsed;
     m_dlCtrlSinrTrace(GetCellId(), m_rnti, sinrSum / rbUsed, GetBwpId());
 }
 
@@ -1792,6 +1860,20 @@ NrUePhy::GenerateDlCqiReportMimo(const std::vector<MimoSignalChunk>& mimoChunks)
         .m_mcs = cqi.m_mcs,
         .m_optPrecMat = cqi.m_optPrecMat,
     };
+
+    UeKpiInfo info;
+    info.rnti = m_rnti;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = cqi.m_rank;
+
+    m_lastUeKpiInfo = info;
+
+    // === Accumulate for averaging ===
+    m_ueKpiAcc.cqiSum += dlcqi.m_wbCqi;
+    m_ueKpiAcc.mcsSum += dlcqi.m_mcs;
+    m_ueKpiAcc.riSum += dlcqi.m_ri;
+    m_ueKpiAcc.count++;
 
     auto msg = Create<NrDlCqiMessage>();
     msg->SetSourceBwp(GetBwpId());
