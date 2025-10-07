@@ -33,6 +33,13 @@ struct UeKpiInfo
   uint8_t  ri;   ///< Rank Indicator
 };
 
+    // --- For averaging UE KPIs ---
+    struct UeKpiAccumulator {
+        double cqiSum = 0.0;
+        double mcsSum = 0.0;
+        double riSum  = 0.0;
+        uint32_t count = 0;
+    };
 
 /**
  * \ingroup ue-phy
@@ -973,6 +980,7 @@ class NrUePhy : public NrPhy
 
     double m_sinr_current; //for KPI tracking
     mutable UeKpiInfo m_lastUeKpiInfo = {0, 0, 0, 0}; // In-class initializer
+    UeKpiAccumulator m_ueKpiAcc;
 };
 
 } // namespace ns3

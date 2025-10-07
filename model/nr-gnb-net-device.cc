@@ -41,8 +41,9 @@
 std::vector<int> g_ueImsiList;
 uint64_t start_sim_time = 0;
 uint64_t current_sim_time = 0;
-bool headerWritten_Cell = false;
-bool headerWritten_UE = false;
+// in your class definition
+std::unordered_map<uint32_t, bool> headerWritten_Cell;
+std::unordered_map<uint32_t, bool> headerWritten_UE;
 
 
 void SendToInfluxDB(const std::string &payload) {
@@ -1051,301 +1052,283 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
                             monitor, classifier, intervalSec);
     }
 
-    void NrGnbNetDevice::Cell_KPI_tracker() {
+      void NrGnbNetDevice::Cell_KPI_tracker() {
         NS_LOG_UNCOND("---------------------------------------------");
+
         // Create a folder
         std::stringstream folderName;
         folderName << "trace_" << sim_id;
-
         if (!std::filesystem::exists(folderName.str())) {
             std::filesystem::create_directory(folderName.str());
         }
 
-        // Construct the full file path within the folder
+        // File path
         std::stringstream cell_kpi_file;
         cell_kpi_file << folderName.str() << "/Cell_" << this->GetCellId()
-                      << "_Cell_stats_" << sim_id << ".csv";
+                << "_Cell_stats_" << sim_id << ".csv";
 
-        // Open the file in append mode
         std::ofstream traceFile(cell_kpi_file.str(), std::ios::out | std::ios::app);
+        if (!traceFile.is_open()) {
+            std::cerr << "Error opening file for writing: " << cell_kpi_file.str() << std::endl;
+            return;
+        }
 
-        if (traceFile.is_open()) {
-            // If the file is empty, write the header
-            if (!headerWritten_Cell && traceFile.tellp() == 0) {
-                traceFile << "TS,CELL_ID,PRB_USAGE,CURR_PRB,"
-                          << "AVG_TP,AVG_PKT_LOSS,AVG_DELAY_MS,AVG_JITTER_MS,"
-                          << "TOT_TP,UE_COUNT\n";   // ✅ Added UE_COUNT
-                headerWritten_Cell = true;
-            }
+        // Write header once
+        if (!headerWritten_Cell[this->GetCellId()] && traceFile.tellp() == 0) {
+            traceFile << "TS,CELL_ID,PRB_USAGE,CURR_PRB,"
+                    << "AVG_TP,AVG_PKT_LOSS,AVG_DELAY_MS,AVG_JITTER_MS,"
+                    << "TOT_TP,UE_COUNT\n";
+            headerWritten_Cell[this->GetCellId()] = true;
+        }
 
-            Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
-            NrGnbPhy::RbStats stats = gnbPhy->GetRBStats();
+        Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
+        NrGnbPhy::RbStats stats = gnbPhy->GetRBStats();
 
-            // Fill CellStats structure
-            CellStats cellStats;
-            cellStats.cellId = this->GetCellId();
-            cellStats.prbUsagePercentage = stats.prbUsagePercentage;
-            cellStats.averageLastRb = stats.averageLastRb;
+        // Cell stats
+        CellStats cellStats;
+        cellStats.cellId = this->GetCellId();
+        cellStats.prbUsagePercentage = stats.prbUsagePercentage;
+        cellStats.averageLastRb = stats.averageLastRb;
 
-            // --- Aggregate UE KPIs ---
-            double sumTp = 0.0, sumLoss = 0.0, sumDelay = 0.0, sumJitter = 0.0;
-            uint32_t ueCount = 0;
+        double sumTp = 0.0, sumLoss = 0.0, sumDelay = 0.0, sumJitter = 0.0;
+        uint32_t ueCount = 0;
 
-            for (auto &kv: m_imsiToTp) {
-                uint64_t imsi = kv.first;
-                double tp = kv.second;
+        for (auto &kv: m_imsiToTp) {
+            uint64_t imsi = kv.first;
+            double tp = kv.second;
 
-                // ensure UE is attached to this cell
-                Ptr<NetDevice> dev = nullptr;
-                for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it) {
-                    Ptr<Node> node = *it;
-                    for (uint32_t i = 0; i < node->GetNDevices(); ++i) {
-                        Ptr<NrUeNetDevice> ueDev = node->GetDevice(i)->GetObject<NrUeNetDevice>();
-                        if (ueDev && ueDev->GetImsi() == imsi && ueDev->GetCellId() == this->GetCellId()) {
-                            dev = ueDev;
-                            break;
-                        }
+            Ptr<NetDevice> dev = nullptr;
+            for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it) {
+                Ptr<Node> node = *it;
+                for (uint32_t i = 0; i < node->GetNDevices(); ++i) {
+                    Ptr<NrUeNetDevice> ueDev = node->GetDevice(i)->GetObject<NrUeNetDevice>();
+                    if (ueDev && ueDev->GetImsi() == imsi && ueDev->GetCellId() == this->GetCellId()) {
+                        dev = ueDev;
+                        break;
                     }
-                    if (dev) break;
                 }
-                if (!dev) continue; // skip UEs not in this cell
-
-                // skip UEs with zero throughput
-                if (tp <= 0.0) continue;
-
-                // Throughput
-                sumTp += tp;
-
-                // Loss / delay / jitter
-                auto itLoss = m_imsiToPacketLoss.find(imsi);
-                auto itDelay = m_imsiToDelay.find(imsi);
-                auto itJitter = m_imsiToJitter.find(imsi);
-
-                if (itLoss != m_imsiToPacketLoss.end()) sumLoss += itLoss->second;
-                if (itDelay != m_imsiToDelay.end()) sumDelay += itDelay->second;
-                if (itJitter != m_imsiToJitter.end()) sumJitter += itJitter->second;
-
-                ueCount++;
+                if (dev) break;
             }
+            if (!dev) continue;
+            if (tp <= 0.0) continue;
 
-            double avgTp = (ueCount > 0) ? sumTp / ueCount : 0.0;
-            double avgLoss = (ueCount > 0) ? sumLoss / ueCount : 0.0;
-            double avgDelay = (ueCount > 0) ? sumDelay / ueCount : 0.0;
-            double avgJitter = (ueCount > 0) ? sumJitter / ueCount : 0.0;
+            sumTp += tp;
 
+            auto itLoss = m_imsiToPacketLoss.find(imsi);
+            auto itDelay = m_imsiToDelay.find(imsi);
+            auto itJitter = m_imsiToJitter.find(imsi);
 
-            // Print struct contents
-            NS_LOG_UNCOND("Cell stats-> gNB " << cellStats.cellId
-                                              << " | PRB Usage: " << std::fixed << std::setprecision(0)
-                                              << cellStats.prbUsagePercentage << " %"
-                                              << " | Avg Last RB: " << std::fixed << std::setprecision(0)
-                                              << cellStats.averageLastRb
-                                              << " | Avg TP: " << std::fixed << std::setprecision(2) << avgTp << " Mbps"
-                                              << " | Tot TP: " << std::fixed << std::setprecision(2) << sumTp << " Mbps"
-                                              << " | Avg Loss: " << std::fixed << std::setprecision(2) << avgLoss * 100
-                                              << " %"
-                                              << " | Avg Delay: " << std::fixed << std::setprecision(2) << avgDelay
-                                              << " ms"
-                                              << " | Avg Jitter: " << std::fixed << std::setprecision(2) << avgJitter
-                                              << " ms"
-                                              << " | UE Count: " << ueCount);   // ✅ Added in log
+            if (itLoss != m_imsiToPacketLoss.end()) sumLoss += itLoss->second;
+            if (itDelay != m_imsiToDelay.end()) sumDelay += itDelay->second;
+            if (itJitter != m_imsiToJitter.end()) sumJitter += itJitter->second;
 
-            // Write to CSV
-            traceFile << Simulator::Now().GetSeconds() << ","
-                      << cellStats.cellId << ","
-                      << std::fixed << std::setprecision(2) << cellStats.prbUsagePercentage << ","
-                      << std::fixed << std::setprecision(2) << cellStats.averageLastRb << ","
-                      << std::fixed << std::setprecision(2) << avgTp << ","
-                      << std::fixed << std::setprecision(4) << avgLoss << ","
-                      << std::fixed << std::setprecision(2) << avgDelay << ","
-                      << std::fixed << std::setprecision(2) << avgJitter << ","
-                      << std::fixed << std::setprecision(2) << sumTp << ","
-                      << ueCount << "\n";   // ✅ Added in CSV
+            ueCount++;
+        }
 
-            // Export to DB if enabled
-            if (report_to_db) {
-                if (avgTp > 0) {
-                    std::ostringstream payload;
-                    payload << "cell_stats,cell_id=" << cellStats.cellId
-                            << " prb_usage=" << cellStats.prbUsagePercentage
-                            << ",avg_last_rb=" << cellStats.averageLastRb
-                            << ",avg_tp=" << avgTp
-                            << ",tot_tp=" << sumTp
-                            << ",avg_pkt_loss=" << avgLoss
-                            << ",avg_delay_ms=" << avgDelay
-                            << ",avg_jitter_ms=" << avgJitter
-                            << ",ue_count=" << ueCount   // ✅ Added in DB export
-                            << " " << current_sim_time;
+        double avgTp = (ueCount > 0) ? sumTp / ueCount : 0.0;
+        double avgLoss = (ueCount > 0) ? sumLoss / ueCount : 0.0;
+        double avgDelay = (ueCount > 0) ? sumDelay / ueCount : 0.0;
+        double avgJitter = (ueCount > 0) ? sumJitter / ueCount : 0.0;
 
-                    SendToInfluxDB(payload.str());
-                } else {
-                    std::ostringstream payload;
-                    payload << "cell_stats,cell_id=" << cellStats.cellId
-                            << " prb_usage=" << cellStats.prbUsagePercentage
-                            << ",avg_last_rb=" << cellStats.averageLastRb
-                            << ",ue_count=" << ueCount   // ✅ Added in DB export
-                            << " " << current_sim_time;
+        // Console log
+        NS_LOG_UNCOND("Cell stats-> gNB " << cellStats.cellId
+                      << " | PRB Usage: " << std::fixed << std::setprecision(0)
+                      << cellStats.prbUsagePercentage << " %"
+                      << " | Avg Last RB: " << std::fixed << std::setprecision(0)
+                      << cellStats.averageLastRb
+                      << " | Avg TP: " << std::fixed << std::setprecision(2) << avgTp << " Mbps"
+                      << " | Tot TP: " << std::fixed << std::setprecision(2) << sumTp << " Mbps"
+                      << " | Avg Loss: " << std::fixed << std::setprecision(2) << avgLoss * 100
+                      << " %"
+                      << " | Avg Delay: " << std::fixed << std::setprecision(2) << avgDelay
+                      << " ms"
+                      << " | Avg Jitter: " << std::fixed << std::setprecision(2) << avgJitter
+                      << " ms"
+                      << " | UE Count: " << ueCount);
 
-                    SendToInfluxDB(payload.str());
-                }
+        // CSV
+        traceFile << Simulator::Now().GetSeconds() << ","
+                << cellStats.cellId << ","
+                << std::fixed << std::setprecision(2) << cellStats.prbUsagePercentage << ","
+                << std::fixed << std::setprecision(2) << cellStats.averageLastRb << ","
+                << std::fixed << std::setprecision(2) << avgTp << ","
+                << std::fixed << std::setprecision(4) << avgLoss << ","
+                << std::fixed << std::setprecision(2) << avgDelay << ","
+                << std::fixed << std::setprecision(2) << avgJitter << ","
+                << std::fixed << std::setprecision(2) << sumTp << ","
+                << ueCount << "\n";
+        traceFile.flush();
+        if (report_to_db) {
+            if (avgTp > 0) {
+                std::ostringstream payload;
+                payload << "cell_stats,cell_id=" << cellStats.cellId
+                        << " prb_usage=" << cellStats.prbUsagePercentage
+                        << ",avg_last_rb=" << cellStats.averageLastRb
+                        << ",avg_tp=" << avgTp
+                        << ",tot_tp=" << sumTp
+                        << ",avg_pkt_loss=" << avgLoss
+                        << ",avg_delay_ms=" << avgDelay
+                        << ",avg_jitter_ms=" << avgJitter
+                        << ",ue_count=" << ueCount // ✅ Added in DB export
+                        << " " << current_sim_time;
+
+                SendToInfluxDB(payload.str());
+            } else {
+                std::ostringstream payload;
+                payload << "cell_stats,cell_id=" << cellStats.cellId
+                        << " prb_usage=" << cellStats.prbUsagePercentage
+                        << ",avg_last_rb=" << cellStats.averageLastRb
+                        << ",ue_count=" << ueCount // ✅ Added in DB export
+                        << " " << current_sim_time;
+
+                SendToInfluxDB(payload.str());
             }
         }
-        traceFile.close();
     }
 
 
     void NrGnbNetDevice::UE_KPI_tracker() {
         std::stringstream folderName;
         folderName << "trace_" << sim_id;
-
         if (!std::filesystem::exists(folderName.str())) {
             std::filesystem::create_directory(folderName.str());
         }
 
         std::stringstream ue_kpi_file;
         ue_kpi_file << folderName.str() << "/Cell_" << this->GetCellId()
-                    << "_UE_stats_" << sim_id << ".csv";
+                << "_UE_stats_" << sim_id << ".csv";
 
         std::ofstream traceFile(ue_kpi_file.str(), std::ios::out | std::ios::app);
-
-        if (traceFile.is_open()) {
-            if (!headerWritten_UE && traceFile.tellp() == 0) {
-                traceFile << "TS,IMSI,CELL_ID,SINR,RSRP,DL_TP,MCS,RI,CQI,"
-                          << "PKT_LOSS,DELAY_MS,JITTER_MS\n";   // ✅ Already includes CELL_ID
-                headerWritten_UE = true;
-            }
-
-            std::unordered_map<uint64_t, UEStats> ueStatsMap;
-
-            // --- Collect KPIs per UE ---
-            for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it) {
-                Ptr<Node> node = *it;
-                for (uint32_t i = 0; i < node->GetNDevices(); ++i) {
-                    Ptr<NrUeNetDevice> ueDevice =
-                            node->GetDevice(i)->GetObject<NrUeNetDevice>();
-                    if (!ueDevice || ueDevice->GetCellId() != this->GetCellId())
-                        continue;
-
-                    Ptr<NrUePhy> uePhy = ueDevice->GetPhy(0);
-                    if (!uePhy)
-                        continue;
-
-                    uePhy->ReportUeMeasurements();
-                    double rsrp = uePhy->GetRsrp();
-                    double sinr_lin = uePhy->GetSINR();
-                    double sinr_dB = 10 * log10(sinr_lin);
-
-                    UeKpiInfo kpi = uePhy->GetUEkpi();
-
-                    uint64_t ueImsi64 = ueDevice->GetImsi();
-                    uint32_t ueImsi = static_cast<uint32_t>(ueImsi64);
-                    double dl_tp = 0.0;
-
-                    auto itTp = m_imsiToTp.find(ueImsi);
-                    if (itTp != m_imsiToTp.end()) {
-                        dl_tp = itTp->second;
-                    }
-
-                    // FlowMonitor KPIs
-                    double pktLoss = 0.0, delayMs = 0.0, jitterMs = 0.0;
-                    auto itLoss = m_imsiToPacketLoss.find(ueImsi);
-                    auto itDelay = m_imsiToDelay.find(ueImsi);
-                    auto itJitter = m_imsiToJitter.find(ueImsi);
-
-                    if (itLoss != m_imsiToPacketLoss.end()) pktLoss = itLoss->second;
-                    if (itDelay != m_imsiToDelay.end()) delayMs = itDelay->second;
-                    if (itJitter != m_imsiToJitter.end()) jitterMs = itJitter->second;
-
-                    UEStats &stats = ueStatsMap[ueImsi64];
-                    stats.IMSI = ueImsi64;
-                    stats.cell_id = double (this->GetCellId());
-                    stats.SINR = sinr_dB;
-                    stats.RSRP = rsrp;
-                    stats.dl_tp = dl_tp;
-                    stats.mcs = kpi.mcs;
-                    stats.ri = kpi.ri;
-                    stats.cqi = kpi.cqi;
-                    stats.pktLoss = pktLoss;
-                    stats.delay = delayMs;
-                    stats.jitter = jitterMs;
-                    stats.tp_ongoing = (dl_tp > 0.0);
-                }
-            }
-
-            // --- Write + Report all UEs ---
-            for (auto &pair: ueStatsMap) {
-                UEStats &stats = pair.second;
-
-                NS_LOG_UNCOND("UE stats -> UE " << stats.IMSI
-                                                << " | Cell ID: " << stats.cell_id   // ✅ Explicit cell_id
-                                                << " | SINR: " << std::fixed << std::setprecision(1) << stats.SINR
-                                                << " dB"
-                                                << " | RSRP: " << std::fixed << std::setprecision(0) << stats.RSRP
-                                                << " dBm"
-                                                << " | DL TP: " << std::fixed << std::setprecision(1) << stats.dl_tp
-                                                << " Mbps"
-                                                << " | MCS: " << static_cast<uint32_t>(stats.mcs)
-                                                << " | RI: " << static_cast<uint32_t>(stats.ri)
-                                                << " | CQI: " << static_cast<uint32_t>(stats.cqi)
-                                                << " | Loss: " << std::fixed << std::setprecision(2)
-                                                << stats.pktLoss * 100 << " %"
-                                                << " | Delay: " << std::fixed << std::setprecision(2) << stats.delay
-                                                << " ms"
-                                                << " | Jitter: " << std::fixed << std::setprecision(2) << stats.jitter
-                                                << " ms");
-
-                // CSV
-                traceFile << Simulator::Now().GetSeconds() << "," << stats.IMSI << ","
-                          << stats.cell_id << ","   // ✅ Explicit cell_id
-                          << std::fixed << std::setprecision(2) << stats.SINR << ","
-                          << std::fixed << std::setprecision(2) << stats.RSRP << ","
-                          << std::fixed << std::setprecision(2) << stats.dl_tp << ","
-                          << static_cast<uint32_t>(stats.mcs) << ","
-                          << static_cast<uint32_t>(stats.ri) << ","
-                          << static_cast<uint32_t>(stats.cqi) << ","
-                          << std::fixed << std::setprecision(4) << stats.pktLoss << ","
-                          << std::fixed << std::setprecision(2) << stats.delay << ","
-                          << std::fixed << std::setprecision(2) << stats.jitter << "\n";
-
-                // DB export
-                if (report_to_db) {
-                    if (stats.tp_ongoing) {
-                        std::ostringstream payload;
-                        payload << "ue_stats,ue=" << stats.IMSI
-                                << ",cell_id=" << stats.cell_id   // ✅ Use cell_id consistently
-                                << " sinr=" << stats.SINR
-                                << ",rsrp=" << stats.RSRP
-                                << ",dl_tp=" << stats.dl_tp
-                                << ",mcs=" << static_cast<uint32_t>(stats.mcs)
-                                << ",ri=" << static_cast<uint32_t>(stats.ri)
-                                << ",cqi=" << static_cast<uint32_t>(stats.cqi)
-                                << ",pkt_loss=" << stats.pktLoss
-                                << ",delay_ms=" << stats.delay
-                                << ",jitter_ms=" << stats.jitter
-                                << " " << current_sim_time;
-                        SendToInfluxDB(payload.str());
-                    } else {
-                        std::ostringstream payload;
-                        payload << "ue_stats,ue=" << stats.IMSI
-                                << ",cell_id=" << stats.cell_id  // ✅ Use cell_id consistently
-                                << " sinr=" << stats.SINR
-                                << ",rsrp=" << stats.RSRP
-                                << " " << current_sim_time;
-                        SendToInfluxDB(payload.str());
-                    }
-                }
-
-                stats.tp_ongoing = false;
-            }
-
-            traceFile.close();
-
-            // Reset TP map
-            for (auto &pair: m_imsiToTp) {
-                pair.second = 0.0;
-            }
-        } else {
+        if (!traceFile.is_open()) {
             std::cerr << "Error opening file for writing: " << ue_kpi_file.str() << std::endl;
+            return;
+        }
+
+        // Header
+        if (!headerWritten_UE[this->GetCellId()] && traceFile.tellp() == 0) {
+            traceFile << "TS,IMSI,CELL_ID,SINR,RSRP,DL_TP,MCS,RI,CQI,"
+                    << "PKT_LOSS,DELAY_MS,JITTER_MS\n";
+            headerWritten_UE[this->GetCellId()] = true;
+        }
+
+        std::unordered_map<uint64_t, UEStats> ueStatsMap;
+
+        // Collect per UE
+        for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it) {
+            Ptr<Node> node = *it;
+            for (uint32_t i = 0; i < node->GetNDevices(); ++i) {
+                Ptr<NrUeNetDevice> ueDevice = node->GetDevice(i)->GetObject<NrUeNetDevice>();
+                if (!ueDevice || ueDevice->GetCellId() != this->GetCellId())
+                    continue;
+
+                Ptr<NrUePhy> uePhy = ueDevice->GetPhy(0);
+                if (!uePhy) continue;
+
+                uePhy->ReportUeMeasurements();
+                double rsrp = uePhy->GetRsrp();
+                double sinrLin = uePhy->GetSINR();
+                double sinrDb = 10 * log10(sinrLin);
+
+                UeKpiInfo kpi = uePhy->GetUEkpi();
+
+                uint64_t imsi = ueDevice->GetImsi();
+
+                double dl_tp = 0.0;
+                auto itTp = m_imsiToTp.find(imsi);
+                if (itTp != m_imsiToTp.end()) dl_tp = itTp->second;
+
+                double pktLoss = 0.0, delayMs = 0.0, jitterMs = 0.0;
+                auto itLoss = m_imsiToPacketLoss.find(imsi);
+                auto itDelay = m_imsiToDelay.find(imsi);
+                auto itJitter = m_imsiToJitter.find(imsi);
+
+                if (itLoss != m_imsiToPacketLoss.end()) pktLoss = itLoss->second;
+                if (itDelay != m_imsiToDelay.end()) delayMs = itDelay->second;
+                if (itJitter != m_imsiToJitter.end()) jitterMs = itJitter->second;
+
+                UEStats &stats = ueStatsMap[imsi];
+                stats.IMSI = imsi;
+                stats.cell_id = this->GetCellId();
+                stats.SINR = sinrDb;
+                stats.RSRP = rsrp;
+                stats.dl_tp = dl_tp;
+                stats.mcs = kpi.mcs;
+                stats.ri = kpi.ri;
+                stats.cqi = kpi.cqi;
+                stats.pktLoss = pktLoss;
+                stats.delay = delayMs;
+                stats.jitter = jitterMs;
+                stats.tp_ongoing = (dl_tp > 0.0);
+            }
+        }
+
+        // Write + log
+        for (auto &pair: ueStatsMap) {
+            UEStats &stats = pair.second;
+
+            NS_LOG_UNCOND("UE stats -> UE " << stats.IMSI
+                          << " | Cell ID: " << stats.cell_id // ✅ Explicit cell_id
+                          << " | SINR: " << std::fixed << std::setprecision(1) << stats.SINR
+                          << " dB"
+                          << " | RSRP: " << std::fixed << std::setprecision(0) << stats.RSRP
+                          << " dBm"
+                          << " | DL TP: " << std::fixed << std::setprecision(1) << stats.dl_tp
+                          << " Mbps"
+                          << " | MCS: " << static_cast<uint32_t>(stats.mcs)
+                          << " | RI: " << static_cast<uint32_t>(stats.ri)
+                          << " | CQI: " << static_cast<uint32_t>(stats.cqi)
+                          << " | Loss: " << std::fixed << std::setprecision(2)
+                          << stats.pktLoss * 100 << " %"
+                          << " | Delay: " << std::fixed << std::setprecision(2) << stats.delay
+                          << " ms"
+                          << " | Jitter: " << std::fixed << std::setprecision(2) << stats.jitter
+                          << " ms");
+
+            traceFile << Simulator::Now().GetSeconds() << "," << stats.IMSI << ","
+                    << stats.cell_id << "," // ✅ Explicit cell_id
+                    << std::fixed << std::setprecision(2) << stats.SINR << ","
+                    << std::fixed << std::setprecision(2) << stats.RSRP << ","
+                    << std::fixed << std::setprecision(2) << stats.dl_tp << ","
+                    << static_cast<uint32_t>(stats.mcs) << ","
+                    << static_cast<uint32_t>(stats.ri) << ","
+                    << static_cast<uint32_t>(stats.cqi) << ","
+                    << std::fixed << std::setprecision(4) << stats.pktLoss << ","
+                    << std::fixed << std::setprecision(2) << stats.delay << ","
+                    << std::fixed << std::setprecision(2) << stats.jitter << "\n";
+            if (report_to_db) {
+                if (stats.tp_ongoing) {
+                    std::ostringstream payload;
+                    payload << "ue_stats,ue=" << stats.IMSI
+                            << ",cell_id=" << stats.cell_id // ✅ Use cell_id consistently
+                            << " sinr=" << stats.SINR
+                            << ",rsrp=" << stats.RSRP
+                            << ",dl_tp=" << stats.dl_tp
+                            << ",mcs=" << static_cast<uint32_t>(stats.mcs)
+                            << ",ri=" << static_cast<uint32_t>(stats.ri)
+                            << ",cqi=" << static_cast<uint32_t>(stats.cqi)
+                            << ",pkt_loss=" << stats.pktLoss
+                            << ",delay_ms=" << stats.delay
+                            << ",jitter_ms=" << stats.jitter
+                            << " " << current_sim_time;
+                    SendToInfluxDB(payload.str());
+                } else {
+                    std::ostringstream payload;
+                    payload << "ue_stats,ue=" << stats.IMSI
+                            << ",cell_id=" << stats.cell_id // ✅ Use cell_id consistently
+                            << " sinr=" << stats.SINR
+                            << ",rsrp=" << stats.RSRP
+                            << " " << current_sim_time;
+                    SendToInfluxDB(payload.str());
+                }
+            }
+            stats.tp_ongoing = false;
+        }
+
+        traceFile.flush();
+
+        // Reset TP
+        for (auto &pair: m_imsiToTp) {
+            pair.second = 0.0;
         }
 
         NS_LOG_UNCOND("---------------------------------------------");
