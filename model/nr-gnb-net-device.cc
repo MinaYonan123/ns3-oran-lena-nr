@@ -470,10 +470,10 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
       std::to_string(txPdcpPduNrRlc)));
   }
 
-  if (!indicationMessageHelper->IsOffline ())
-    {
-      indicationMessageHelper->FillCuUpValues (plmId);
-    }
+  // if (!indicationMessageHelper->IsOffline ())
+  //   {
+  //     indicationMessageHelper->FillCuUpValues (plmId);
+  //   }
 /////
   NS_LOG_DEBUG(Simulator::Now().GetSeconds() << " " << m_cellId << " cell volume " << cellDlTxVolume);
   if (m_forceE2FileLogging)
@@ -729,6 +729,8 @@ NrGnbNetDevice::CheckReportingFlag()
     const auto &sub_map = m_e2term->SubscriptionMapRef();
     if (!sub_map.empty())
     { std :: cout << "sub_map is not empty" << std::endl;
+      int threshold = 0;
+
       try 
       {
         const auto& expr = sub_map.at("Test Condition Expression");
@@ -736,8 +738,25 @@ NrGnbNetDevice::CheckReportingFlag()
         std::cout << "expr type: " << expr.type().name() << std::endl;
         std::cout << "value type: " << value.type().name() << std::endl;
         int index = std::any_cast<int>(expr);
-        int threshold = std::any_cast<int>(value);
+       
+        if (value.type() == typeid(int)) {
+          threshold = std::any_cast<int>(value);
+        } else if (value.type() == typeid(double)) {
+          threshold = static_cast<int>(std::any_cast<double>(value));
+        } else if (value.type() == typeid(bool)) {
+          threshold = std::any_cast<bool>(value) ? 1 : 0;
+        } else if (value.type() == typeid(unsigned char*)) {
+          auto p = std::any_cast<unsigned char*>(value);
+          if (p != nullptr) threshold = static_cast<int>(p[0]);
+        } else if (value.type() == typeid(char*)) {
+          auto p = std::any_cast<char*>(value);
+          if (p != nullptr) threshold = static_cast<unsigned char>(p[0]);
+        } else {
+          NS_LOG_ERROR("Unsupported Test Condition Value type: " << value.type().name());
+          return;
+        }
 
+  std::cout << "index: " << index << " threshold: " << threshold << std::endl;
         // Get current PRB average
        // double currentPrbAvg = CalculatePrbAverage();
         //std ::cout << "Current PRB Average: " << currentPrbAvg << std::endl;
@@ -746,10 +765,7 @@ NrGnbNetDevice::CheckReportingFlag()
         
           //bool shouldReport = MATH_CALL_BACKS[index](currentPrbAvg, threshold);
 
-          std::cout <<
-                       " Threshold: " << threshold << 
-                       " Should Report: " << m_is_reported << " m_isReportingEnabled: " << m_isReportingEnabled << std::endl;
-                        m_is_reported = true;
+        std::cout <<" Should Report: " << m_is_reported << " m_isReportingEnabled: " << m_isReportingEnabled << std::endl;
           // If we haven't started reporting yet, check if we should start
           if (!m_isReportingEnabled)
           {
