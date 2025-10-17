@@ -47,6 +47,23 @@ bool equal(int x, int y);
 
   // Declare the MATH_CALL_BACKS vector
 extern std::vector<std::function<bool(int, int)>> MATH_CALL_BACKS;
+
+ struct CellStats {
+        uint16_t cellId = 0;               // Cell ID
+        double prbUsagePercentage = 0.0;   // PRB usage percentage
+        double averageLastRb = 0.0;        // Average value of the last RB
+
+        // --- Aggregated UE-level KPIs ---
+        double avgThroughputMbps = 0.0;    // Average UE throughput [Mbps]
+        double totalThroughputMbps = 0.0;  // Total throughput across all UEs [Mbps]
+        double avgPacketLoss = 0.0;        // Average packet loss ratio [0–1]
+        double avgDelayMs = 0.0;           // Average delay [ms]
+        double avgJitterMs = 0.0;          // Average jitter [ms]
+        uint32_t ueCount = 0;              // Number of active UEs
+    };
+
+extern CellStats g_cellStats;
+
 class NrGnbNetDevice : public NrNetDevice
 {
   public:
@@ -160,7 +177,7 @@ class NrGnbNetDevice : public NrNetDevice
     uint32_t GetCellIdUlEarfcn(uint16_t cellId) const;
     std::string GetImsiString(uint64_t imsi);
     void BuildAndSendReportMessage (E2Termination::RicSubscriptionRequest_rval_s params);
-    Ptr<KpmIndicationMessage> BuildRicIndicationMessageCuUp(std::string plmId);
+    Ptr<KpmIndicationMessage> BuildRicIndicationMessageE2KPIs(std::string plmId);
     void SetE2Termination(Ptr<E2Termination> e2term); //// Added to set the E2 termination object
     Ptr<E2Termination> GetE2Termination() const; //// Added to get the E2 termination object
     void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle KPM subscription requests
@@ -172,14 +189,11 @@ class NrGnbNetDevice : public NrNetDevice
     double m_e2Periodicity;
     bool m_is_reported = false;
     bool m_hasValidSubscription ;
-    bool m_sendCuUp;
+    //bool m_sendCuUp;
+    bool m_sendE2KPIs;
     std::string m_cuUpFileName;
 
-    struct CellStats {
-        uint16_t cellId = 0;         // Cell ID
-        double prbUsagePercentage = 0; // PRB usage percentage
-        double averageLastRb= 0;    // Store the average value of the last RBG
-    };
+
 
     struct UEStats {
         uint64_t IMSI;
@@ -195,6 +209,7 @@ class NrGnbNetDevice : public NrNetDevice
         double jitter  = 0.0;  // Mean jitter [ms]
         int cell_id = 0;
     };
+
 
     void Cell_KPI_tracker();
 
