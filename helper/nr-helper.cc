@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 #include "nr-helper.h"
-
+#include "ns3/node-list.h"
 #include "nr-bearer-stats-calculator.h"
 #include "nr-epc-helper.h"
 #include "nr-mac-rx-trace.h"
@@ -45,6 +45,9 @@
 #include <ns3/uniform-planar-array.h>
 
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
+#include <fstream>
 
 namespace ns3
 {
@@ -540,6 +543,8 @@ NrHelper::InstallUeDevice(const NodeContainer& c,
         Ptr<NetDevice> device = InstallSingleUeDevice(node, allBwps);
         device->SetAddress(Mac48Address::Allocate());
         devices.Add(device);
+        m_ueNetDeviceContainer.Add(device); // Populate the helper's container
+
     }
     return devices;
 }
@@ -557,6 +562,7 @@ NrHelper::InstallGnbDevice(const NodeContainer& c,
         Ptr<NetDevice> device = InstallSingleGnbDevice(node, allBwps);
         device->SetAddress(Mac48Address::Allocate());
         devices.Add(device);
+        m_gnbNetDeviceContainer.Add(device); // Populate the helper's container
     }
     return devices;
 }
@@ -2174,6 +2180,255 @@ NrHelper::SetupMimoPmi(const NrHelper::MimoPmiParams& mp)
     {
         SetPmSearchAttribute("CodebookType", TypeIdValue(TypeId::LookupByName(mp.fullSearchCb)));
     }
+}
+
+void
+NrHelper::StartEnergyMonitoring()
+{
+    NS_LOG_FUNCTION(this);
+    
+    if (m_gnbNetDeviceContainer.GetN() == 0)
+    {
+        NS_LOG_WARN("No gNB devices available, cannot start energy monitoring");
+        return;
+    }
+    
+    // Clear previous energy tracking
+    m_previousCellEnergy.clear();
+    
+    // Initialize energy monitoring with first measurement
+    Simulator::Schedule(MilliSeconds(100), &NrHelper::CalculateAveragePowerPerCell, this);
+}
+
+void NrHelper::CalculateAveragePowerPerCell()
+{
+    if (m_gnbNetDeviceContainer.GetN() == 0)
+    {
+        NS_LOG_WARN("No gNB devices available, skipping CalculateAveragePowerPerCell");
+        return;
+    }
+
+    double intervalSeconds = 0.1; // 100 ms interval
+
+    for (auto it = m_gnbNetDeviceContainer.Begin(); it != m_gnbNetDeviceContainer.End(); ++it)
+    {
+        Ptr<NrGnbNetDevice> gnb = DynamicCast<NrGnbNetDevice>(*it);
+        if (!gnb) continue;
+
+        uint16_t cellId = gnb->GetCellId();
+        double currentTotalEnergy = 0.0;
+        double currentGnbPower = 0.0;
+        double currentUesTotalPower = 0.0;
+        uint32_t activeUeCount = 0;
+
+        // Sum energy from gNB PHYs and get current power
+        for (uint32_t i = 0; i < gnb->GetCcMapSize(); ++i)
+        {
+            Ptr<NrGnbPhy> phy = gnb->GetPhy(i);
+            if (phy)
+            {
+                currentTotalEnergy += phy->GetTotalEnergyConsumption();
+                currentGnbPower += phy->GetCurrentPowerConsumption();
+                
+                // Get detailed gNB metrics
+                double prbUtilization = phy->GetPrbUtilization();
+                double activityFactor = phy->CalculateActivityFactor();
+                
+                std::cout << "[Time " << Simulator::Now().GetSeconds() 
+                          << "s] [CellId " << cellId << "] [BWP " << i 
+                          << "] gNB PRB Utilization: " << (prbUtilization * 100) << "%" << std::endl;
+                std::cout << "[Time " << Simulator::Now().GetSeconds() 
+                          << "s] [CellId " << cellId << "] [BWP " << i 
+                          << "] gNB Activity Factor: " << (activityFactor * 100) << "%" << std::endl;
+            }
+        }
+
+        // Sum energy from UEs associated with this cell
+        auto rrc = gnb->GetRrc();
+        if (rrc)
+        {
+            auto ueMap = rrc->GetUeMap();
+            for (const auto &ueEntry : ueMap)
+            {
+                Ptr<NrUeManager> ueManager = ueEntry.second;
+                if (!ueManager) continue;
+
+                uint64_t imsi = ueManager->GetImsi();
+
+                // Find the UE device
+                Ptr<NrUeNetDevice> ueDev = nullptr;
+                for (NodeList::Iterator nodeIt = NodeList::Begin(); nodeIt != NodeList::End(); ++nodeIt)
+                {
+                    Ptr<Node> node = *nodeIt;
+                    for (uint32_t j = 0; j < node->GetNDevices(); ++j)
+                    {
+                        Ptr<NrUeNetDevice> candidateUeDev = node->GetDevice(j)->GetObject<NrUeNetDevice>();
+                        if (candidateUeDev && candidateUeDev->GetImsi() == imsi)
+                        {
+                            ueDev = candidateUeDev;
+                            break;
+                        }
+                    }
+                    if (ueDev) break;
+                }
+
+                // Sum energy from UE PHYs and get detailed metrics
+                if (ueDev)
+                {
+                    activeUeCount++;
+                    double ueTotalPower = 0.0;
+                    
+                    for (uint32_t k = 0; k < ueDev->GetCcMapSize(); ++k)
+                    {
+                        Ptr<NrUePhy> uePhy = ueDev->GetPhy(k);
+                        if (uePhy)
+                        {
+                            double ueEnergy = uePhy->GetTotalEnergyConsumption();
+                            double uePower = uePhy->GetCurrentPowerConsumption();
+                            
+                            currentTotalEnergy += ueEnergy;
+                            ueTotalPower += uePower;
+                            
+                            // Get UE state and activity details
+                            NrUePhy::UeState ueState = uePhy->GetCurrentUeState();
+                            double ueActivity = uePhy->CalculateUeActivityFactor();
+                            
+                            std::string stateStr;
+                            switch(ueState)
+                            {
+                                case NrUePhy::UeState::IDLE: stateStr = "IDLE"; break;
+                                case NrUePhy::UeState::CONNECTED: stateStr = "CONNECTED"; break;
+                                case NrUePhy::UeState::ACTIVE_TX: stateStr = "ACTIVE_TX"; break;
+                                case NrUePhy::UeState::ACTIVE_RX: stateStr = "ACTIVE_RX"; break;
+                                case NrUePhy::UeState::SLEEP: stateStr = "SLEEP"; break;
+                            }
+                            
+                            std::cout << "[Time " << Simulator::Now().GetSeconds() 
+                                      << "s] [CellId " << cellId 
+                                      << "] [UE IMSI " << imsi 
+                                      << "] State: " << stateStr
+                                      << ", Activity: " << (ueActivity * 100) << "%"
+                                      << ", Power: " << uePower << "W"
+                                      << ", Energy: " << ueEnergy << "J" << std::endl;
+                        }
+                    }
+                    currentUesTotalPower += ueTotalPower;
+                }
+            }
+        }
+
+        // Calculate energy consumed in this interval and average power
+        if (m_previousCellEnergy.find(cellId) != m_previousCellEnergy.end())
+        {
+            double energyConsumedInInterval = currentTotalEnergy - m_previousCellEnergy[cellId];
+            double averagePower = energyConsumedInInterval / intervalSeconds;
+            double currentTotalPower = currentGnbPower + currentUesTotalPower;
+            
+            // Energy efficiency metrics
+            double energyPerUe = activeUeCount > 0 ? energyConsumedInInterval / activeUeCount : 0.0;
+            double powerPerUe = activeUeCount > 0 ? currentUesTotalPower / activeUeCount : 0.0;
+            
+            std::cout << "\n=== CELL " << cellId << " ENERGY REPORT ===" << std::endl;
+            std::cout << "[Time " << Simulator::Now().GetSeconds() << "s]" << std::endl;
+            std::cout << "Active UEs: " << activeUeCount << std::endl;
+            std::cout << "Energy consumed in last " << (intervalSeconds * 1000) << "ms: " 
+                      << energyConsumedInInterval << " J" << std::endl;
+            std::cout << "Average power in interval: " << averagePower << " W" << std::endl;
+            std::cout << "Current total power: " << currentTotalPower << " W" << std::endl;
+            std::cout << "  - gNB power: " << currentGnbPower << " W" << std::endl;
+            std::cout << "  - UEs total power: " << currentUesTotalPower << " W" << std::endl;
+            std::cout << "Energy per UE: " << energyPerUe << " J" << std::endl;
+            std::cout << "Power per UE: " << powerPerUe << " W" << std::endl;
+            std::cout << "Cumulative total energy: " << FormatEnergyWithUnits(currentTotalEnergy) << std::endl;
+            std::cout << "========================================\n" << std::endl;
+            
+            // Log to file for analysis
+            LogEnergyToFile(cellId, energyConsumedInInterval, averagePower, currentTotalPower, 
+                           activeUeCount, currentGnbPower, currentUesTotalPower);
+        }
+        else
+        {
+            // First measurement - just store the initial value
+            std::cout << "[Time " << Simulator::Now().GetSeconds() 
+                      << "s] [CellId " << cellId 
+                      << "] Initial total energy: " << FormatEnergyWithUnits(currentTotalEnergy) 
+                      << " (Active UEs: " << activeUeCount << ")" << std::endl;
+        }
+
+        // Update previous energy value for next interval
+        m_previousCellEnergy[cellId] = currentTotalEnergy;
+    }
+
+    // Reschedule only if simulation is still running
+    if (Simulator::Now() + MilliSeconds(100) < Simulator::GetMaximumSimulationTime())
+    {
+        Simulator::Schedule(MilliSeconds(100), &NrHelper::CalculateAveragePowerPerCell, this);
+    }
+}
+
+void
+NrHelper::LogEnergyToFile(uint16_t cellId, double intervalEnergy, double averagePower, 
+                         double currentPower, uint32_t activeUes, double gnbPower, double uesTotalPower)
+{
+    // Create filename based on cell ID
+    std::string filename = "EnergyConsumption_Cell_" + std::to_string(cellId) + ".csv";
+    
+    // Check if file exists to write header
+    bool fileExists = false;
+    std::ifstream checkFile(filename);
+    if (checkFile.good())
+    {
+        fileExists = true;
+    }
+    checkFile.close();
+    
+    // Open file for appending
+    std::ofstream outFile(filename, std::ios::app);
+    
+    if (!fileExists)
+    {
+        // Write CSV header
+        outFile << "Time(s),IntervalEnergy(J),AveragePower(W),CurrentTotalPower(W),"
+                << "gNBPower(W),UesTotalPower(W),ActiveUEs,EnergyPerUE(J),PowerPerUE(W)" << std::endl;
+    }
+    
+    double energyPerUe = activeUes > 0 ? intervalEnergy / activeUes : 0.0;
+    double powerPerUe = activeUes > 0 ? currentPower / activeUes : 0.0;
+    
+    outFile << Simulator::Now().GetSeconds() << ","
+            << intervalEnergy << ","
+            << averagePower << ","
+            << currentPower << ","
+            << gnbPower << ","
+            << uesTotalPower << ","
+            << activeUes << ","
+            << energyPerUe << ","
+            << powerPerUe << std::endl;
+    
+    outFile.close();
+}
+
+std::string
+NrHelper::FormatEnergyWithUnits(double energyJoules)
+{
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(2);
+    
+    if (energyJoules >= 1e9) {
+        // GJ (Gigajoules)
+        ss << (energyJoules / 1e9) << " GJ";
+    } else if (energyJoules >= 1e6) {
+        // MJ (Megajoules)
+        ss << (energyJoules / 1e6) << " MJ";
+    } else if (energyJoules >= 1e3) {
+        // kJ (Kilojoules)
+        ss << (energyJoules / 1e3) << " kJ";
+    } else {
+        // J (Joules)
+        ss << energyJoules << " J";
+    }
+    
+    return ss.str();
 }
 
 } // namespace ns3

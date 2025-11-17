@@ -953,6 +953,28 @@ class NrHelper : public Object
     std::string m_e2ip;
     uint16_t m_e2port;
     uint16_t m_e2localPort;
+    /**
+     * \brief Start periodic energy monitoring for all cells
+     */
+    void StartEnergyMonitoring();
+
+    /**
+     * \brief Calculate and print the average power per cell (gNB + attached UEs)
+     */
+    void CalculateAveragePowerPerCell();
+
+    /**
+     * \brief Log energy consumption data to CSV file
+     * \param cellId Cell identifier
+     * \param intervalEnergy Energy consumed in the interval
+     * \param averagePower Average power in the interval
+     * \param currentPower Current total power consumption
+     * \param activeUes Number of active UEs
+     * \param gnbPower Current gNB power
+     * \param uesTotalPower Total UE power consumption
+     */
+    void LogEnergyToFile(uint16_t cellId, double intervalEnergy, double averagePower, 
+                        double currentPower, uint32_t activeUes, double gnbPower, double uesTotalPower);
   private:
     bool m_enableMimoFeedback{false}; ///< Let UE compute MIMO feedback with PMI and RI
     ObjectFactory m_pmSearchFactory;  ///< Factory for precoding matrix search algorithm
@@ -1066,6 +1088,19 @@ class NrHelper : public Object
     Ptr<NrMacSchedulingStats> m_macSchedStats; //!<< Pointer to NrMacStatsCalculator
     bool m_useIdealRrc;
     std::vector<OperationBandInfo> m_bands;
+
+    NetDeviceContainer m_gnbNetDeviceContainer;
+    NetDeviceContainer m_ueNetDeviceContainer;
+    
+    // For tracking energy consumption per cell
+    std::map<uint16_t, double> m_previousCellEnergy; //!< Previous total energy per cell ID
+    
+    /**
+     * \brief Format energy value with appropriate units (J, kJ, MJ, GJ)
+     * \param energyJoules Energy value in Joules
+     * \return Formatted string with value and unit
+     */
+    std::string FormatEnergyWithUnits(double energyJoules);
 };
 
 } // namespace ns3
