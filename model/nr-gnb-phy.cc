@@ -48,6 +48,7 @@ NrGnbPhy::NrGnbPhy()
     NS_LOG_FUNCTION(this);
     m_gnbCphySapProvider = new MemberNrGnbCphySapProvider<NrGnbPhy>(this);
     m_nrFhPhySapUser = new MemberNrFhPhySapUser<NrGnbPhy>(this);
+    Simulator::ScheduleNow(&NrGnbPhy::UpdateEnergyConsumption, this, MilliSeconds(100));
 }
 
 NrGnbPhy::~NrGnbPhy()
@@ -2010,5 +2011,108 @@ NrGnbPhy::ChannelAccessLost()
     NS_LOG_INFO("Channel access lost");
     m_channelStatus = NONE;
 }
+void
+NrGnbPhy::UpdateEnergyConsumption(Time interval) {
+    double power = GetCurrentPowerConsumption(); // instantaneous power
+    energyAccumulated += power * interval.GetSeconds(); // accumulate energy in Joules
+    
+    // Schedule next update
+    Simulator::Schedule(interval, &NrGnbPhy::UpdateEnergyConsumption, this, interval);
+}
+
+double
+NrGnbPhy::GetTotalEnergyConsumption() const {
+    return energyAccumulated; // in Joules
+}
+
+double 
+NrGnbPhy::GetCurrentPowerConsumption() const
+{
+    // Base power consumption components for gNB
+    double basePowerWatt = 150.0;        // Base station idle power (~150W)
+    double coolingPowerWatt = 50.0;      // Cooling system (~50W)
+    double processingPowerWatt = 20.0;   // Digital signal processing (~20W)
+    
+    // RF transmission power (convert from dBm to Watts)
+    double txPowerDbm = GetTxPower();
+    double rfPowerWatt = std::pow(10.0, (txPowerDbm - 30.0) / 10.0);
+    
+    // Activity-based power scaling
+    double activityFactor = CalculateActivityFactor();
+    double dynamicPowerWatt = processingPowerWatt * activityFactor;
+    
+    // Power amplifier efficiency (typically 40-50% for gNB)
+    double paEfficiency = 0.45;
+    double amplifierPowerWatt = rfPowerWatt / paEfficiency;
+    
+    // Total power consumption varies with activity
+    double totalPower = basePowerWatt + coolingPowerWatt + dynamicPowerWatt + amplifierPowerWatt;
+    
+    return totalPower;
+}
+
+double
+NrGnbPhy::CalculateActivityFactor() const
+{
+    // Calculate activity based on actual resource usage
+    double prbUtilization = GetPrbUtilization();  // 0.0 to 1.0
+    double schedulingActivity = GetSchedulingActivity(); // 0.0 to 1.0
+    
+    // Combine different activity metrics
+    double baseActivity = 0.3;  // Minimum activity level (30%)
+    double variableActivity = 0.7 * std::max(prbUtilization, schedulingActivity);
+    
+    return std::min(1.0, baseActivity + variableActivity);
+}
+
+double
+NrGnbPhy::GetPrbUtilization() const
+{
+    // Calculate PRB utilization based on current allocations
+    uint32_t totalPrbs = GetRbNum();
+    uint32_t usedPrbs = 0;
+    
+    // Check if spectrum phy and HARQ module are available
+    auto spectrumPhy = GetSpectrumPhy();
+    if (!spectrumPhy || !spectrumPhy->GetHarqPhyModule())
+    {
+        return 0.0;
+    }
+    
+    // For gNB, we can estimate PRB utilization based on current scheduling activity
+    // This is a simplified approach - in reality this would require access to scheduler state
+    
+    // Estimate based on number of connected UEs and their activity
+    uint32_t connectedUes = m_ueAttached.size();
+    if (connectedUes == 0)
+    {
+        return 0.0;
+    }
+    
+    // Assume average PRB usage per UE (this could be made more sophisticated)
+    double avgPrbsPerUe = 10.0; // Typical allocation
+    double estimatedUsedPrbs = connectedUes * avgPrbsPerUe;
+    
+    return totalPrbs > 0 ? std::min(1.0, estimatedUsedPrbs / totalPrbs) : 0.0;
+}
+
+double
+NrGnbPhy::GetSchedulingActivity() const
+{
+    // Calculate scheduling activity based on active UEs and data in buffers
+    uint32_t activeUes = 0;
+    
+    // Count UEs with pending data
+    if (m_phySapUser)
+    {
+        // This would need integration with MAC layer to get buffer status
+        // For now, use a simplified approach based on recent transmissions
+        activeUes = m_deviceMap.size(); // Number of connected UEs
+    }
+    
+    // Normalize activity (assume max 64 UEs per cell)
+    return std::min(1.0, static_cast<double>(activeUes) / 64.0);
+}
+
 
 } // namespace ns3

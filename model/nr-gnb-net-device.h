@@ -295,6 +295,7 @@ class NrGnbNetDevice : public NrNetDevice
     std::map<uint32_t, double> m_imsiToJitter;
     std::map<uint32_t, double> m_imsiToPacketLoss;
     uint32_t m_nextImsiIndex = 1;
+    std::vector<double> m_powerSamples;
 
 
 };

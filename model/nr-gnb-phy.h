@@ -12,6 +12,7 @@
 #include "nr-harq-phy.h"
 #include "nr-phy-sap.h"
 #include "nr-phy.h"
+#include "ns3/core-module.h"
 
 #include <functional>
 
@@ -413,6 +414,41 @@ class NrGnbPhy : public NrPhy
      */
     void ChangeToQuasiOmniBeamformingVector();
 
+        /**
+     * \brief Get the current power consumption of this PHY (in Watts)
+     * \return Current power consumption based on activity and state
+     */
+    double GetCurrentPowerConsumption() const;
+
+    /**
+     * \brief Get total accumulated energy consumption (in Joules)
+     * \return Total energy consumed since start
+     */
+    double GetTotalEnergyConsumption() const;
+
+    /**
+     * \brief Update energy consumption accumulator
+     * \param interval Time interval for the update
+     */
+    void UpdateEnergyConsumption(Time interval);
+
+    /**
+     * \brief Calculate current activity factor based on resource usage
+     * \return Activity factor between 0.0 and 1.0
+     */
+    double CalculateActivityFactor() const;
+
+    /**
+     * \brief Get current PRB utilization ratio
+     * \return PRB utilization between 0.0 and 1.0
+     */
+    double GetPrbUtilization() const;
+
+    /**
+     * \brief Get current scheduling activity level
+     * \return Scheduling activity between 0.0 and 1.0
+     */
+    double GetSchedulingActivity() const;
 
     struct RbStats {
       uint16_t cellId = 0;         // Cell ID
@@ -436,6 +472,9 @@ class NrGnbPhy : public NrPhy
     NrFhPhySapProvider* m_nrFhPhySapProvider{nullptr}; //!< FH Control SAP provider
 
   private:
+
+      double energyAccumulated = 0.0; // in Joules
+
     /**
      * \brief Set the current slot pattern (better to call it only once..)
      * \param pattern the pattern

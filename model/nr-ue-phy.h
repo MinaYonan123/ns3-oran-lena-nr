@@ -11,6 +11,7 @@
 #include "nr-phy.h"
 #include "nr-pm-search.h"
 #include "nr-ue-cphy-sap.h"
+#include "ns3/core-module.h"
 
 #include <ns3/traced-callback.h>
 
@@ -488,6 +489,90 @@ class NrUePhy : public NrPhy
     /// \brief Get the precoding matrix search engine
     Ptr<NrPmSearch> GetPmSearch() const;
 
+    /**
+     * \brief UE power states for energy modeling
+     */
+    enum class UeState
+    {
+        IDLE,       ///< UE is idle (minimal activity)
+        CONNECTED,  ///< UE is connected but not actively transmitting/receiving
+        ACTIVE_TX,  ///< UE is actively transmitting
+        ACTIVE_RX,  ///< UE is actively receiving
+        SLEEP       ///< UE is in sleep mode (very low power)
+    };
+
+    /**
+     * \brief Get the current power consumption of this UE PHY (in Watts)
+     * \return Current power consumption based on state and activity
+     */
+    double GetCurrentPowerConsumption() const;
+
+    /**
+     * \brief Get total accumulated energy consumption (in Joules)
+     * \return Total energy consumed since start
+     */
+    double GetTotalEnergyConsumption() const;
+
+    /**
+     * \brief Update energy consumption accumulator
+     * \param interval Time interval for the update
+     */
+    void UpdateEnergyConsumption(Time interval);
+
+    /**
+     * \brief Get current UE state for energy calculation
+     * \return Current UE state
+     */
+    UeState GetCurrentUeState() const;
+
+    /**
+     * \brief Calculate UE activity factor based on usage patterns
+     * \return Activity factor between 0.0 and 1.0
+     */
+    double CalculateUeActivityFactor() const;
+
+    /**
+     * \brief Get transmission activity level
+     * \return Transmission activity between 0.0 and 1.0
+     */
+    double GetTransmissionActivity() const;
+
+    /**
+     * \brief Get reception activity level
+     * \return Reception activity between 0.0 and 1.0
+     */
+    double GetReceptionActivity() const;
+
+    /**
+     * \brief Get buffer activity level
+     * \return Buffer activity between 0.0 and 1.0
+     */
+    double GetBufferActivity() const;
+
+    /**
+     * \brief Get time of last activity
+     * \return Time of last transmission or reception
+     */
+    Time GetLastActivityTime() const;
+
+    /**
+     * \brief Check if UE is currently transmitting
+     * \return True if transmitting
+     */
+    bool IsTransmitting() const;
+
+    /**
+     * \brief Check if UE is currently receiving
+     * \return True if receiving
+     */
+    bool IsReceiving() const;
+
+    /**
+     * \brief Check if UE is connected to network
+     * \return True if connected
+     */
+    bool IsConnected() const;
+
   protected:
     /**
      * \brief DoDispose method inherited from Object
@@ -496,6 +581,8 @@ class NrUePhy : public NrPhy
     uint32_t GetNumRbPerRbg() const override;
 
   private:
+      double energyAccumulated = 0.0; // in Joules
+
     /**
      * \brief Layer-1 filtering of RSRP measurements and reporting to the RRC entity.
      * For the moment we don't report to RRC but the function is prepared to be
