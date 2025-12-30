@@ -21,6 +21,7 @@
 #include <ns3/double.h>
 #include <ns3/node-list.h>
 #include <ns3/node.h>
+#include <algorithm>
 #include <cmath>
 #include <filesystem> // For filesystem utilities, available since C++17
 #include <fstream>
@@ -30,6 +31,10 @@
 #include <vector>
 #include "encode_e2apv1.hpp"
 #include "ns3/Lena-indication-message-helper.h"
+#include "ns3/kpm-function-description.h"
+#include "ns3/ric-control-function-description.h"
+#include "ns3/ccc-function-description.h"
+#include "ns3/ccc-message.h"
 
 #include <curl/curl.h>
 #include <string>
@@ -46,9 +51,10 @@ void SendToInfluxDB(const std::string &payload) {
     CURL *curl = curl_easy_init();
     std::string influx_host = "localhost";
     std::string influx_port = "8086";
-    std::string influx_user = "root";
-    std::string influx_password = "root";
     std::string db_name = "influx";
+    
+    // Use InfluxDB 1.8 API format (not v2)
+    static bool firstCall = true;
 
     if (curl) {
         const std::string url = "http://" + influx_host + ":" + influx_port +
@@ -128,6 +134,9 @@ NrGnbNetDevice::GetTypeId()
                            MakeDoubleChecker<double> ())
             .AddAttribute("RC_E2functionID", "Function ID to subscribe", DoubleValue(3),
                            MakeDoubleAccessor(&NrGnbNetDevice::rc_e2_func_id),
+                           MakeDoubleChecker<double>())
+            .AddAttribute("CCC_E2functionID", "Function ID to subscribe", DoubleValue(4),
+                           MakeDoubleAccessor(&NrGnbNetDevice::ccc_func_id),
                            MakeDoubleChecker<double>())
             .AddAttribute ("EnableCuUpReport", "If true, send CuUpReport", BooleanValue (true),
                           MakeBooleanAccessor (&NrGnbNetDevice::m_sendCuUp),
@@ -280,6 +289,108 @@ NrGnbNetDevice::KpmSubscriptionCallback (E2AP_PDU_t* sub_req_pdu)
 
 
 void
+NrGnbNetDevice::CCCcontrolMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu)
+{
+  NS_LOG_FUNCTION(this);
+  NS_LOG_DEBUG("\nReceived CCC RIC Control Message, cellId= " << m_cellId << "\n");
+
+  // Create CCC control message handler
+  Ptr<CccControlMessage> cccMsg = Create<CccControlMessage>(sub_req_pdu);
+  
+  // Print message for debugging
+  cccMsg->PrintControlMessage();
+  
+  // Get RIC style type
+  uint32_t ricStyleType = cccMsg->GetRicStyleType();
+  NS_LOG_INFO("RIC Style Type: " << ricStyleType);
+  
+  // Get cells controlled
+  std::vector<CellControlInfo> cells = cccMsg->GetCellsControlled();
+  NS_LOG_INFO("Number of cells to control: " << cells.size());
+  
+  // Process each cell
+  for (size_t i = 0; i < cells.size(); ++i)
+  {
+      std::string cellGlobalId = cccMsg->GetCellGlobalId(i);
+      NS_LOG_INFO("Processing control for cell: " << cellGlobalId);
+      
+      // Get configuration structures for this cell
+      const CellControlInfo& cellInfo = cells[i];
+      
+      for (const auto& config : cellInfo.configuration_structures)
+      {
+          NS_LOG_INFO("Configuration structure: " << config.ran_configuration_structure_name);
+          
+          // Handle O-NESPolicy
+          if (config.ran_configuration_structure_name == "O-NESPolicy")
+          {
+              json newValues = config.new_values_of_attributes;
+              
+              // Extract antenna mask and apply as port power
+              if (newValues.contains("antennaMask"))
+              {
+                  std::string antennaMask = newValues["antennaMask"].get<std::string>();
+                  NS_LOG_UNCOND("Received antenna mask: " << antennaMask);
+                  
+                  // Parse antenna mask as binary string (e.g., "1010" -> [1.0, 0.0, 1.0, 0.0])
+                  // Each character is either '1' (port enabled) or '0' (port disabled)
+                  std::vector<double> portPowerVec;
+                  
+                  for (char c : antennaMask)
+                  {
+                      if (c == '1')
+                      {
+                          portPowerVec.push_back(1.0);  // Port enabled
+                      }
+                      else if (c == '0')
+                      {
+                          portPowerVec.push_back(0.0);  // Port disabled
+                      }
+                      else if (!std::isspace(c))
+                      {
+                          NS_LOG_WARN("Invalid character '" << c << "' in antenna mask, skipping");
+                      }
+                  }
+                  
+                  if (!portPowerVec.empty())
+                  {
+                      NS_LOG_UNCOND("Applying port power with " << portPowerVec.size() << " ports");
+                      
+                      // Apply port power configuration
+                      SetPortPower(portPowerVec);
+                      
+                      // Log applied values
+                      std::cout << "Cell " << m_cellId << " - Port power set to: [";
+                      for (size_t i = 0; i < portPowerVec.size(); ++i)
+                      {
+                          std::cout << portPowerVec[i];
+                          if (i < portPowerVec.size() - 1) std::cout << ", ";
+                      }
+                      std::cout << "] (" << portPowerVec.size() << " ports)" << std::endl;
+                      
+                      // Count active ports
+                      int activePorts = 0;
+                      for (double val : portPowerVec)
+                      {
+                          if (val > 0.0) activePorts++;
+                      }
+                      std::cout << "Cell " << m_cellId << " - Active ports: " << activePorts 
+                                << "/" << portPowerVec.size() << std::endl;
+                  }
+                  else
+                  {
+                      NS_LOG_WARN("Antenna mask is empty or invalid");
+                  }
+              }
+
+          }
+      }
+  }
+  
+  NS_LOG_INFO("CCC Control Message processed successfully");
+}
+
+void
     NrGnbNetDevice::ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu) {
         NS_LOG_DEBUG("\n\nLteEnbNetDevice::ControlMessageReceivedCallback: Received RIC Control Message");
 
@@ -299,6 +410,7 @@ NrGnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
   if (!m_forceE2FileLogging) {
        long m_e2_func_id = long (e2_func_id);
        long m_rc_e2_func_id = long(rc_e2_func_id);
+       long m_ccc_func_id = long(ccc_func_id);
       Ptr<KpmFunctionDescription> kpmFd = Create<KpmFunctionDescription> ();
       e2term->RegisterKpmCallbackToE2Sm (
               m_e2_func_id, kpmFd,std::bind (&NrGnbNetDevice::KpmSubscriptionCallback, this, std::placeholders::_1));
@@ -307,6 +419,10 @@ NrGnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
       e2term->RegisterSmCallbackToE2Sm(m_rc_e2_func_id, ricCtrlFd,
                                       std::bind(&NrGnbNetDevice::ControlMessageReceivedCallback,
                                                 this, std::placeholders::_1));
+
+      Ptr <CccFunctionDescription> cccFd = Create<CccFunctionDescription>();
+      e2term->RegisterSmCallbackToE2Sm(m_ccc_func_id, cccFd,
+                                      std::bind(&NrGnbNetDevice::CCCcontrolMessageReceivedCallback, this, std::placeholders::_1));
 
       e2term->RegisterCallbackFunctionToE2Sm(1, std::bind(&NrGnbNetDevice::stopSendingAndCancelSchedule, this));
     }
@@ -528,7 +644,18 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
       //indicationMessageHelper->FillCuUpValues (plmId);
     }
 /////
-  NS_LOG_DEBUG(Simulator::Now().GetSeconds() << " " << m_cellId << " cell volume " << cellDlTxVolume);
+  // Get average transmit power
+  double avgPowerDbm = GetAveragePower();
+  
+  NS_LOG_DEBUG(Simulator::Now().GetSeconds() << " " << m_cellId << " cell volume " << cellDlTxVolume
+               << " avg power " << avgPowerDbm << " dBm");
+  
+  std::cout << Simulator::Now().GetSeconds() << " Cell " << m_cellId 
+            << " Average TX Power: " << avgPowerDbm << " dBm (over " 
+            << m_powerSamples.size() << " samples)" << std::endl;
+  
+  // Clear power samples for next reporting period
+  ClearPowerSamples();
   if (m_forceE2FileLogging)
     {
       std::ofstream csv{};
@@ -544,7 +671,18 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
       // m_pDCPBytesUL (0), m_pDCPBytesDL (cellDlTxVolume), DRB.PdcpSduVolumeDl_Filter.UEID (txBytes),
       // Tot.PdcpSduNbrDl.UEID (txDlPackets), DRB.PdcpSduBitRateDl.UEID (pdcpThroughput),
       // DRB.PdcpSduDelayDl.UEID (pdcpLatency), QosFlow.PdcpPduVolumeDL_Filter.UEID (txPdcpPduBytesNrRlc),
-      // DRB.PdcpPduNbrDl.Qos.UEID (txPdcpPduNrRlc)
+      // DRB.PdcpPduNbrDl.Qos.UEID (txPdcpPduNrRlc), avgTxPowerDbm
+
+      // Log average power to CSV header if first time
+      static bool powerHeaderWritten = false;
+      if (!powerHeaderWritten)
+      {
+          std::ofstream csvHeader;
+          csvHeader.open(m_cuUpFileName.c_str(), std::ios_base::app);
+          csvHeader << "avgPowerDbm\n";
+          csvHeader.close();
+          powerHeaderWritten = true;
+      }
 
       for (auto ue : ueMap)
         {
@@ -554,7 +692,7 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
           auto uePms = uePmString.find (imsi)->second;
 
           std::string to_print = std::to_string (timestamp) + "," + ueImsiComplete + "," + "," +
-                                 "," + "," + uePms + "\n";
+                                 "," + "," + uePms + "," + std::to_string(avgPowerDbm) + "\n";
 
           csv << to_print;
         }
@@ -628,6 +766,9 @@ NrGnbNetDevice::DoInitialize()
 {
     NS_LOG_FUNCTION(this);
     m_rrc->Initialize();
+
+    // Start power sampling after 100ms
+    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::SampleTransmitPower, this);
 
     NrNetDevice::DoInitialize();
 }
@@ -937,10 +1078,10 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
         }
 
         // Schedule first throughput sampling
-        if (m_flowMonitor && m_flowClassifier) {
-            Simulator::Schedule(Seconds(0.1),
-                                &NrGnbNetDevice::SampleThroughput, this, m_flowMonitor, m_flowClassifier, 0.1);
-        }
+        // if (m_flowMonitor && m_flowClassifier) {
+        //     Simulator::Schedule(Seconds(0.1),
+        //                         &NrGnbNetDevice::SampleThroughput, this, m_flowMonitor, m_flowClassifier, 0.1);
+        // }
     }
 
     void NrGnbNetDevice::SampleThroughput(
@@ -1321,4 +1462,113 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
 
         NS_LOG_UNCOND("---------------------------------------------");
     }
+
+void
+NrGnbNetDevice::SetPortPower(const std::vector<double>& portPowerVec)
+{
+    NS_LOG_FUNCTION(this);
+    
+    // Validate port power values
+    double sum = 0.0;
+    for (double power : portPowerVec)
+    {
+        NS_ASSERT_MSG(power >= 0.0, "Port power must be non-negative");
+        sum += power;
+    }
+    
+    NS_LOG_INFO("Setting port power configuration with " << portPowerVec.size() 
+                << " ports, sum=" << sum);
+    
+    // Store the configuration
+    m_portPowerConfig = portPowerVec;
+    
+    // Note: To apply this to the codebook, you need to:
+    // 1. Access the NrPmSearch object (typically on UE side)
+    // 2. Call SetCodebookAttribute("PortPower", StringValue(...))
+    // This is typically done during configuration/setup phase
+    // For dynamic runtime changes, additional infrastructure is needed
+    
+    std::cout << "Port power configuration set for gNB " << m_cellId 
+              << " with " << portPowerVec.size() << " ports" << std::endl;
+}
+
+std::vector<double>
+NrGnbNetDevice::GetPortPower() const
+{
+    NS_LOG_FUNCTION(this);
+    return m_portPowerConfig;
+}
+
+void
+NrGnbNetDevice::SampleTransmitPower()
+{
+    NS_LOG_FUNCTION(this);
+    
+    double totalPower = 0.0;
+    uint32_t numBwps = 0;
+    
+    // Calculate current transmit power from all BWPs
+    for (auto& bwp : m_ccMap)
+    {
+        Ptr<NrGnbPhy> phy = bwp.second->GetPhy();
+        if (phy)
+        {
+            // Get TX power in dBm
+            double txPowerDbm = phy->GetTxPower();
+            
+            // Convert to watts and accumulate
+            double txPowerWatts = std::pow(10.0, (txPowerDbm - 30.0) / 10.0);
+            totalPower += txPowerWatts;
+            numBwps++;
+        }
+    }
+    
+    if (numBwps > 0)
+    {
+        // Convert back to dBm for storage
+        double avgPowerDbm = 10.0 * std::log10(totalPower) + 30.0;
+        m_powerSamples.push_back(avgPowerDbm);
+        
+        NS_LOG_DEBUG("Sampled power: " << avgPowerDbm << " dBm (from " 
+                     << numBwps << " BWPs)");
+    }
+    
+    // Schedule next sample in 100ms
+    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::SampleTransmitPower, this);
+}
+
+double
+NrGnbNetDevice::GetAveragePower() const
+{
+    NS_LOG_FUNCTION(this);
+    
+    if (m_powerSamples.empty())
+    {
+        return 0.0;
+    }
+    
+    // Calculate average in linear domain
+    double sumLinear = 0.0;
+    for (double powerDbm : m_powerSamples)
+    {
+        double powerWatts = std::pow(10.0, (powerDbm - 30.0) / 10.0);
+        sumLinear += powerWatts;
+    }
+    
+    double avgWatts = sumLinear / m_powerSamples.size();
+    double avgDbm = 10.0 * std::log10(avgWatts) + 30.0;
+    
+    NS_LOG_DEBUG("Average power over " << m_powerSamples.size() 
+                 << " samples: " << avgDbm << " dBm");
+    
+    return avgDbm;
+}
+
+void
+NrGnbNetDevice::ClearPowerSamples()
+{
+    NS_LOG_FUNCTION(this);
+    m_powerSamples.clear();
+}
+
 } // namespace ns3
