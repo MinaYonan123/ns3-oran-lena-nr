@@ -195,6 +195,7 @@ class NrGnbNetDevice : public NrNetDevice
     void SetE2Termination(Ptr<E2Termination> e2term); //// Added to set the E2 termination object
     Ptr<E2Termination> GetE2Termination() const; //// Added to get the E2 termination object
     void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle KPM subscription requests
+    void CCCcontrolMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle CCC subscription requests
     void ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle control messages
     void stopSendingAndCancelSchedule();  //// Added to stop sending messages and cancel schedule
     void CheckReportingFlag (void);
@@ -237,6 +238,35 @@ class NrGnbNetDevice : public NrNetDevice
                           Ptr<Ipv4FlowClassifier> classifier,
                           double intervalSec);
 
+    /**
+     * \brief Set port power allocation for all BWPs
+     * \param portPowerVec Vector of port power values (must sum to ~1.0)
+     */
+    void SetPortPower(const std::vector<double>& portPowerVec);
+
+    /**
+     * \brief Get current port power allocation from first BWP
+     * \return Vector of port power values
+     */
+    std::vector<double> GetPortPower() const;
+
+    /**
+     * \brief Calculate and sample current transmit power
+     * Called periodically to track average power
+     */
+    void SampleTransmitPower();
+
+    /**
+     * \brief Get average transmit power over sampling period
+     * \return Average power in dBm
+     */
+    double GetAveragePower() const;
+
+    /**
+     * \brief Clear power samples
+     */
+    void ClearPowerSamples();
+
   protected:
     void DoInitialize() override;
 
@@ -258,6 +288,8 @@ class NrGnbNetDevice : public NrNetDevice
     Ptr<E2Termination> m_e2term;  /// A pointer to the E2 termination object
     double  rc_e2_func_id ; // to RC  function id
     double e2_func_id; //to pass kpm function id
+    double ccc_func_id; //to pass ccc function id
+      
     bool m_stopSendingMessages;
     bool m_isReportingEnabled;
 
@@ -296,6 +328,7 @@ class NrGnbNetDevice : public NrNetDevice
     std::map<uint32_t, double> m_imsiToPacketLoss;
     uint32_t m_nextImsiIndex = 1;
     std::vector<double> m_powerSamples;
+    std::vector<double> m_portPowerConfig; ///< Configured port power allocation
 
 
 };
