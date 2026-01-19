@@ -64,6 +64,11 @@ NrAmc::GetTypeId()
                                           "ErrorModel",
                                           NrAmc::ShannonModel,
                                           "ShannonModel"))
+            .AddAttribute("ImplementationLossDb",
+                          "SINR calibration offset in dB",
+                          DoubleValue(3.5),
+                          MakeDoubleAccessor(&NrAmc::m_implementationLossDb),
+                          MakeDoubleChecker<double>())
             .AddAttribute("ErrorModelType",
                           "Type of the Error Model to use when AmcModel is set to ErrorModel. "
                           "This parameter has to match the ErrorModelType in nr-spectrum-model,"
@@ -389,11 +394,18 @@ NrAmc::GetMaxMcsParams(const NrSinrMatrix& sinrMat, size_t subbandSize) const
 uint8_t
 NrAmc::GetMaxMcsForErrorModel(const NrSinrMatrix& sinrMat) const
 {
-    auto mcs = uint8_t{0};
+    uint8_t mcs = 0;
+
+    // Apply implementation loss (for calibration)
+    NrSinrMatrix adjustedSinr = ApplySinrLoss(sinrMat, m_implementationLossDb);
+    // NS_LOG_UNCOND("ApplySinrLoss(): -" << m_implementationLossDb << " dB");
+
     while (mcs <= m_errorModel->GetMaxMcs())
     {
-        auto tbler = CalcTblerForMimoMatrix(mcs, sinrMat);
-        // TODO: Change target TBLER from default 0.1 when using MCS table 3
+        double tbler = CalcTblerForMimoMatrix(mcs, adjustedSinr);
+
+        // NS_LOG_UNCOND("MCS " << (int) mcs << " TBler=" << tbler);
+
         if (tbler > 0.1)
         {
             break;
@@ -408,6 +420,28 @@ NrAmc::GetMaxMcsForErrorModel(const NrSinrMatrix& sinrMat) const
     }
 
     return mcs;
+}
+
+NrSinrMatrix
+NrAmc::ApplySinrLoss(const NrSinrMatrix& sinrMat, double lossDb)
+{
+    NrSinrMatrix adjusted = sinrMat;
+    double lossLinear = std::pow(10.0, -lossDb / 10.0);
+
+    NS_LOG_DEBUG("Applying SINR loss: " << lossDb << " dB (linear factor: " << lossLinear << ")");
+
+    for (size_t row = 0; row < adjusted.GetNumRows(); ++row)
+    {
+        for (size_t col = 0; col < adjusted.GetNumCols(); ++col)
+        {
+            double before = adjusted(row, col);
+            adjusted(row, col) = before * lossLinear;
+            NS_LOG_DEBUG("SINR(" << row << "," << col << "): " << before << " -> "
+                                 << adjusted(row, col));
+        }
+    }
+
+    return adjusted;
 }
 
 uint8_t
