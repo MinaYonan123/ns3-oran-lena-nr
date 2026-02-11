@@ -6,19 +6,73 @@
 
 #include "bandwidth-part-gnb.h"
 #include "bwp-manager-gnb.h"
+#include "encode_e2apv1.hpp"
 #include "nr-gnb-component-carrier-manager.h"
 #include "nr-gnb-mac.h"
 #include "nr-gnb-phy.h"
 #include "nr-gnb-rrc.h"
+#include "nr-ue-net-device.h"
+#include "nr-ue-phy.h"
 
 #include <ns3/abort.h>
+#include <ns3/double.h>
 #include <ns3/ipv4-l3-protocol.h>
 #include <ns3/ipv6-l3-protocol.h>
 #include <ns3/log.h>
 #include <ns3/object-map.h>
 #include <ns3/pointer.h>
-#include "encode_e2apv1.hpp"
-#include <ns3/double.h>
+#include <ns3/node-list.h>
+#include <ns3/node.h>
+
+// trace nr kpis
+#include <cmath>
+#include <curl/curl.h>
+#include <iostream>
+#include <string>
+#include <filesystem> // For filesystem utilities, available since C++17
+#include <fstream>
+#include <iomanip> // Required for std::fixed and std::setprecision
+
+std::vector<int> g_ueImsiList;
+uint64_t start_sim_time = 0;
+uint64_t current_sim_time = 0;
+// in your class definition
+std::unordered_map<uint32_t, bool> headerWritten_Cell;
+std::unordered_map<uint32_t, bool> headerWritten_UE;
+
+void
+SendToInfluxDB(const std::string& payload)
+{
+    CURL* curl = curl_easy_init();
+    std::string influx_host = "localhost";
+    std::string influx_port = "8086";
+    std::string influx_user = "root";
+    std::string influx_password = "root";
+    std::string db_name = "influx";
+
+    if (curl)
+    {
+        const std::string url = "http://" + influx_host + ":" + influx_port +
+                                "/api/v2/write?bucket=influx&precision=ns";
+        struct curl_slist* headers = nullptr;
+        const std::string auth = "Authorization: Token " + influx_user + ":" + influx_password;
+        headers = curl_slist_append(headers, auth.c_str());
+        headers = curl_slist_append(headers, "Content-Type: text/plain");
+
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
+
+        CURLcode res = curl_easy_perform(curl);
+        if (res != CURLE_OK)
+        {
+            std::cerr << "InfluxDB POST failed: " << curl_easy_strerror(res) << std::endl;
+        }
+
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }
+}
 
 namespace ns3
 {
@@ -49,36 +103,47 @@ NrGnbNetDevice::GetTypeId()
                           PointerValue(),
                           MakePointerAccessor(&NrGnbNetDevice::m_rrc),
                           MakePointerChecker<NrGnbRrc>())
-            .AddAttribute ("CellId",
-                            "Cell Identifier",
-                            UintegerValue (0),
-                            MakeUintegerAccessor (&NrGnbNetDevice::m_cellId),
-                            MakeUintegerChecker<uint16_t> ()) 
-            .AddAttribute ("E2Termination",
-                            "The E2 termination object associated to this node",
-                            PointerValue (),
-                            MakePointerAccessor (&NrGnbNetDevice::SetE2Termination,
-                                                            &NrGnbNetDevice::GetE2Termination),
-                            MakePointerChecker <E2Termination> ())  
-            .AddAttribute ("EnableE2FileLogging",
-                         "If true, force E2 indication generation and write E2 fields in csv file",
-                         BooleanValue (false),
-                         MakeBooleanAccessor (&NrGnbNetDevice::m_forceE2FileLogging),
-                         MakeBooleanChecker ())
-            .AddAttribute ("KPM_E2functionID", "Function ID to subscribe", DoubleValue (2),
-                           MakeDoubleAccessor (&NrGnbNetDevice::e2_func_id),
-                           MakeDoubleChecker<double> ())
-            .AddAttribute("RC_E2functionID", "Function ID to subscribe", DoubleValue(3),
-                           MakeDoubleAccessor(&NrGnbNetDevice::rc_e2_func_id),
-                           MakeDoubleChecker<double>());               
+            .AddAttribute("CellId",
+                          "Cell Identifier",
+                          UintegerValue(0),
+                          MakeUintegerAccessor(&NrGnbNetDevice::m_cellId),
+                          MakeUintegerChecker<uint16_t>())
+            .AddAttribute("E2Termination",
+                          "The E2 termination object associated to this node",
+                          PointerValue(),
+                          MakePointerAccessor(&NrGnbNetDevice::SetE2Termination,
+                                              &NrGnbNetDevice::GetE2Termination),
+                          MakePointerChecker<E2Termination>())
+            .AddAttribute("EnableE2FileLogging",
+                          "If true, force E2 indication generation and write E2 fields in csv file",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&NrGnbNetDevice::m_forceE2FileLogging),
+                          MakeBooleanChecker())
+            .AddAttribute("KPM_E2functionID",
+                          "Function ID to subscribe",
+                          DoubleValue(2),
+                          MakeDoubleAccessor(&NrGnbNetDevice::e2_func_id),
+                          MakeDoubleChecker<double>())
+            .AddAttribute("RC_E2functionID",
+                          "Function ID to subscribe",
+                          DoubleValue(3),
+                          MakeDoubleAccessor(&NrGnbNetDevice::rc_e2_func_id),
+                          MakeDoubleChecker<double>()) .AddAttribute("sim_id", "ID of simulation", UintegerValue(0),
+                              MakeUintegerAccessor(&NrGnbNetDevice::sim_id),
+                              MakeUintegerChecker<uint64_t>())
+                .AddAttribute("report_to_db", "Reporting to InfluxDB",
+                              BooleanValue(false),
+                              MakeBooleanAccessor(&NrGnbNetDevice::report_to_db),
+                              MakeBooleanChecker());
     return tid;
 }
 
 NrGnbNetDevice::NrGnbNetDevice()
-    : m_forceE2FileLogging (false),m_cellId(0),
-     m_stopSendingMessages(false),
-     m_isReportingEnabled (false)
-{    
+    : m_forceE2FileLogging(false),
+      m_cellId(0),
+      m_stopSendingMessages(false),
+      m_isReportingEnabled(false)
+{
     NS_LOG_FUNCTION(this);
 }
 
@@ -107,69 +172,76 @@ NrGnbNetDevice::GetCcMapSize() const
     return static_cast<uint32_t>(m_ccMap.size());
 }
 
-
-void NrGnbNetDevice::stopSendingAndCancelSchedule() {
+void
+NrGnbNetDevice::stopSendingAndCancelSchedule()
+{
     m_stopSendingMessages = true;
 }
 
-
 void
-NrGnbNetDevice::KpmSubscriptionCallback (E2AP_PDU_t* sub_req_pdu)
+NrGnbNetDevice::KpmSubscriptionCallback(E2AP_PDU_t* sub_req_pdu)
 {
-  NS_LOG_DEBUG ("\nReceived RIC Subscription Request, cellId= " << m_cellId << "\n");
+    NS_LOG_DEBUG("\nReceived RIC Subscription Request, cellId= " << m_cellId << "\n");
 
-  E2Termination::RicSubscriptionRequest_rval_s params = m_e2term->ProcessRicSubscriptionRequest (sub_req_pdu);
-  NS_LOG_DEBUG ("requestorId " << +params.requestorId <<
-                 ", instanceId " << +params.instanceId <<
-                 ", ranFuncionId " << +params.ranFuncionId <<
-                 ", actionId " << +params.actionId);
+    E2Termination::RicSubscriptionRequest_rval_s params =
+        m_e2term->ProcessRicSubscriptionRequest(sub_req_pdu);
+    NS_LOG_DEBUG("requestorId " << +params.requestorId << ", instanceId " << +params.instanceId
+                                << ", ranFuncionId " << +params.ranFuncionId << ", actionId "
+                                << +params.actionId);
 
-  if (!m_stopSendingMessages && !m_isReportingEnabled && !m_forceE2FileLogging)
-  {
-    //BuildAndSendReportMessage (params);
-    m_isReportingEnabled = true;
-  }
-
+    if (!m_stopSendingMessages && !m_isReportingEnabled && !m_forceE2FileLogging)
+    {
+        // BuildAndSendReportMessage (params);
+        m_isReportingEnabled = true;
+    }
 }
 
-
 void
-    NrGnbNetDevice::ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu) {
-        NS_LOG_DEBUG("\n\nLteEnbNetDevice::ControlMessageReceivedCallback: Received RIC Control Message");
+NrGnbNetDevice::ControlMessageReceivedCallback(E2AP_PDU_t* sub_req_pdu)
+{
+    NS_LOG_DEBUG(
+        "\n\nLteEnbNetDevice::ControlMessageReceivedCallback: Received RIC Control Message");
 
-        // Create RIC Control ACK
-        Ptr <RicControlMessage> controlMessage = Create<RicControlMessage>(sub_req_pdu);
-        NS_LOG_INFO("After RicControlMessage::RicControlMessage constructor");
-        NS_LOG_INFO("Request type " << controlMessage->m_requestType);
-        
-    }
+    // Create RIC Control ACK
+    Ptr<RicControlMessage> controlMessage = Create<RicControlMessage>(sub_req_pdu);
+    NS_LOG_INFO("After RicControlMessage::RicControlMessage constructor");
+    NS_LOG_INFO("Request type " << controlMessage->m_requestType);
+}
+
 void
 NrGnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
 {
-  m_e2term = e2term;
+    m_e2term = e2term;
 
-  NS_LOG_DEBUG("Register E2SM NR");
+    NS_LOG_DEBUG("Register E2SM NR");
 
-  if (!m_forceE2FileLogging) {
-       long m_e2_func_id = long (e2_func_id);
-       long m_rc_e2_func_id = long(rc_e2_func_id);
-      Ptr<KpmFunctionDescription> kpmFd = Create<KpmFunctionDescription> ();
-      e2term->RegisterKpmCallbackToE2Sm (
-              m_e2_func_id, kpmFd,std::bind (&NrGnbNetDevice::KpmSubscriptionCallback, this, std::placeholders::_1));
+    if (!m_forceE2FileLogging)
+    {
+        long m_e2_func_id = long(e2_func_id);
+        long m_rc_e2_func_id = long(rc_e2_func_id);
+        Ptr<KpmFunctionDescription> kpmFd = Create<KpmFunctionDescription>();
+        e2term->RegisterKpmCallbackToE2Sm(
+            m_e2_func_id,
+            kpmFd,
+            std::bind(&NrGnbNetDevice::KpmSubscriptionCallback, this, std::placeholders::_1));
 
-      Ptr <RicControlFunctionDescription> ricCtrlFd = Create<RicControlFunctionDescription>();
-      e2term->RegisterSmCallbackToE2Sm(m_rc_e2_func_id, ricCtrlFd,
-                                      std::bind(&NrGnbNetDevice::ControlMessageReceivedCallback,
-                                                this, std::placeholders::_1));
+        Ptr<RicControlFunctionDescription> ricCtrlFd = Create<RicControlFunctionDescription>();
+        e2term->RegisterSmCallbackToE2Sm(m_rc_e2_func_id,
+                                         ricCtrlFd,
+                                         std::bind(&NrGnbNetDevice::ControlMessageReceivedCallback,
+                                                   this,
+                                                   std::placeholders::_1));
 
-      e2term->RegisterCallbackFunctionToE2Sm(1, std::bind(&NrGnbNetDevice::stopSendingAndCancelSchedule, this));
+        e2term->RegisterCallbackFunctionToE2Sm(
+            1,
+            std::bind(&NrGnbNetDevice::stopSendingAndCancelSchedule, this));
     }
 }
 
 Ptr<E2Termination>
 NrGnbNetDevice::GetE2Termination() const
 {
-  return m_e2term;
+    return m_e2term;
 }
 
 void
@@ -347,17 +419,18 @@ NrGnbNetDevice::UpdateConfig()
         Ptr<BandwidthPartGnb> c = i.second;
         ccPhyConfMap.insert(std::pair<uint8_t, Ptr<BandwidthPartGnb>>(i.first, c));
     }
-   
+
     m_rrc->ConfigureCell(ccPhyConfMap);
     if (m_e2term)
-            {
-              NS_LOG_DEBUG ("E2sim start in cell " << m_cellId << " force CSV logging "
-                                                   << m_forceE2FileLogging);
-              //
-              if(!m_forceE2FileLogging) {
-                  Simulator::Schedule (MicroSeconds (0), &E2Termination::Start, m_e2term);
-                }
-            }
+    {
+        NS_LOG_DEBUG("E2sim start in cell " << m_cellId << " force CSV logging "
+                                            << m_forceE2FileLogging);
+        //
+        if (!m_forceE2FileLogging)
+        {
+            Simulator::Schedule(MicroSeconds(0), &E2Termination::Start, m_e2term);
+        }
+    }
 }
 
 uint16_t
@@ -428,4 +501,471 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
     return 0;
 }
 
+void
+NrGnbNetDevice::SetFlowMonitor(ns3::Ptr<ns3::FlowMonitor> monitor)
+{
+    NS_LOG_FUNCTION(this << monitor);
+    m_flowMonitor = monitor;
+}
+
+void
+NrGnbNetDevice::SetIpv4FlowClassifier(ns3::Ptr<ns3::Ipv4FlowClassifier> classifier)
+{
+    NS_LOG_FUNCTION(this << classifier);
+    m_flowClassifier = classifier;
+
+    // Clear previous contents
+    g_ueImsiList.clear();
+    m_flowIdToImsi.clear();
+    m_prevRxBytes.clear();
+
+    // Collect all UEs
+    for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it)
+    {
+        Ptr<Node> node = *it;
+        int nDevs = node->GetNDevices();
+        for (int j = 0; j < nDevs; j++)
+        {
+            Ptr<NrUeNetDevice> ueDev = node->GetDevice(j)->GetObject<NrUeNetDevice>();
+            if (!ueDev)
+                continue;
+
+            uint64_t imsi = ueDev->GetImsi();
+            if (std::find(g_ueImsiList.begin(), g_ueImsiList.end(), imsi) == g_ueImsiList.end())
+            {
+                g_ueImsiList.push_back(imsi);
+            }
+        }
+    }
+
+    /*std::cout << "=== UE IMSI List ===" << std::endl;
+    for (size_t i = 0; i < g_ueImsiList.size(); ++i) {
+        std::cout << "UE index " << i << " -> IMSI: " << g_ueImsiList[i] << std::endl;
+    }*/
+
+    // Schedule first throughput sampling
+    if (m_flowMonitor && m_flowClassifier)
+    {
+        Simulator::Schedule(Seconds(0.1),
+                            &NrGnbNetDevice::SampleThroughput,
+                            this,
+                            m_flowMonitor,
+                            m_flowClassifier,
+                            0.1);
+    }
+}
+
+void
+NrGnbNetDevice::SampleThroughput(Ptr<FlowMonitor> monitor,
+                                 Ptr<Ipv4FlowClassifier> classifier,
+                                 double intervalSec)
+{
+    if (!monitor || !classifier)
+        return;
+
+    monitor->CheckForLostPackets();
+    FlowMonitor::FlowStatsContainer stats = monitor->GetFlowStats();
+
+    for (const auto& kv : stats)
+    {
+        FlowId id = kv.first;
+        const FlowMonitor::FlowStats& fs = kv.second;
+        Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow(id);
+
+        // Only downlink flows: destination = UE, source = server
+        if (t.sourceAddress != Ipv4Address("1.0.0.2"))
+            continue;
+
+        // Map FlowID to UE IMSI using destination IP
+        uint64_t imsi = 0;
+        for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it)
+        {
+            Ptr<Node> node = *it;
+            for (int j = 0; j < node->GetNDevices(); j++)
+            {
+                Ptr<NrUeNetDevice> ueDev = node->GetDevice(j)->GetObject<NrUeNetDevice>();
+                if (!ueDev)
+                    continue;
+                Ptr<Ipv4> ueIp = node->GetObject<Ipv4>();
+                for (uint32_t k = 1; k < ueIp->GetNInterfaces(); k++)
+                {
+                    Ipv4Address addr = ueIp->GetAddress(k, 0).GetLocal();
+                    if (addr == t.destinationAddress)
+                    {
+                        imsi = ueDev->GetImsi();
+                        break;
+                    }
+                }
+                if (imsi != 0)
+                    break;
+            }
+            if (imsi != 0)
+                break;
+        }
+
+        if (imsi == 0)
+            continue; // Flow not matched to any UE yet
+
+        // Store mapping if first time
+        if (m_flowIdToImsi.find(id) == m_flowIdToImsi.end())
+        {
+            m_flowIdToImsi[id] = imsi;
+        }
+
+        // --- Throughput calculation ---
+        uint64_t prev = 0;
+        auto itPrev = m_prevRxBytes.find(id);
+        if (itPrev != m_prevRxBytes.end())
+            prev = itPrev->second;
+
+        uint64_t curr = fs.rxBytes;
+        uint64_t diff = (curr >= prev) ? (curr - prev) : curr;
+        double thrMbps = static_cast<double>(diff) * 8.0 / (intervalSec * 1e6);
+
+        m_imsiToTp[imsi] = thrMbps;
+        m_prevRxBytes[id] = curr;
+
+        // --- Packet loss, delay, jitter ---
+        double packetLossRatio = 0.0;
+        if (fs.txPackets > 0)
+        {
+            packetLossRatio = 1.0 - (double)fs.rxPackets / (double)fs.txPackets;
+        }
+
+        double meanDelayMs = 0.0;
+        double meanJitterMs = 0.0;
+        if (fs.rxPackets > 0)
+        {
+            meanDelayMs = 1000.0 * fs.delaySum.GetSeconds() / fs.rxPackets;
+            meanJitterMs = 1000.0 * fs.jitterSum.GetSeconds() / fs.rxPackets;
+        }
+
+        // Store KPI per-UE
+        m_imsiToPacketLoss[imsi] = packetLossRatio;
+        m_imsiToDelay[imsi] = meanDelayMs;
+        m_imsiToJitter[imsi] = meanJitterMs;
+
+        // Debug logging (optional)
+        /*
+        NS_LOG_UNCOND("UE " << imsi << " Flow " << id
+                       << "  Thr=" << thrMbps << " Mbps"
+                       << "  Loss=" << packetLossRatio * 100 << " %"
+                       << "  Delay=" << meanDelayMs << " ms"
+                       << "  Jitter=" << meanJitterMs << " ms");
+        */
+    }
+
+    int now_ms = Simulator::Now().GetMilliSeconds();
+    current_sim_time = (sim_id + (uint64_t)now_ms) * 1000000ULL;
+
+    // Schedule KPI tracking
+    Simulator::Schedule(MilliSeconds(0), &NrGnbNetDevice::Cell_KPI_tracker, this);
+    Simulator::Schedule(MilliSeconds(0), &NrGnbNetDevice::UE_KPI_tracker, this);
+
+    // Schedule next throughput sample
+    Simulator::Schedule(Seconds(intervalSec),
+                        &NrGnbNetDevice::SampleThroughput,
+                        this,
+                        monitor,
+                        classifier,
+                        intervalSec);
+}
+
+void
+NrGnbNetDevice::Cell_KPI_tracker()
+{
+    NS_LOG_UNCOND("---------------------------------------------");
+
+    // Create a folder
+    std::stringstream folderName;
+    folderName << "trace_" << sim_id;
+    if (!std::filesystem::exists(folderName.str()))
+    {
+        std::filesystem::create_directory(folderName.str());
+    }
+
+    // File path
+    std::stringstream cell_kpi_file;
+    cell_kpi_file << folderName.str() << "/Cell_" << this->GetCellId() << "_Cell_stats_" << sim_id
+                  << ".csv";
+
+    std::ofstream traceFile(cell_kpi_file.str(), std::ios::out | std::ios::app);
+    if (!traceFile.is_open())
+    {
+        std::cerr << "Error opening file for writing: " << cell_kpi_file.str() << std::endl;
+        return;
+    }
+
+    // Write header once
+    if (!headerWritten_Cell[this->GetCellId()] && traceFile.tellp() == 0)
+    {
+        traceFile << "TS,CELL_ID,PRB_USAGE,CURR_PRB,"
+                  << "AVG_TP,AVG_PKT_LOSS,AVG_DELAY_MS,AVG_JITTER_MS,"
+                  << "TOT_TP,UE_COUNT\n";
+        headerWritten_Cell[this->GetCellId()] = true;
+    }
+
+    Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
+    NrGnbPhy::RbStats stats = gnbPhy->GetRBStats();
+
+    // Cell stats
+    CellStats cellStats;
+    cellStats.cellId = this->GetCellId();
+    cellStats.prbUsagePercentage = stats.prbUsagePercentage;
+    cellStats.averageLastRb = stats.averageLastRb;
+
+    double sumTp = 0.0, sumLoss = 0.0, sumDelay = 0.0, sumJitter = 0.0;
+    uint32_t ueCount = 0;
+
+    for (auto& kv : m_imsiToTp)
+    {
+        uint64_t imsi = kv.first;
+        double tp = kv.second;
+
+        Ptr<NetDevice> dev = nullptr;
+        for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it)
+        {
+            Ptr<Node> node = *it;
+            for (uint32_t i = 0; i < node->GetNDevices(); ++i)
+            {
+                Ptr<NrUeNetDevice> ueDev = node->GetDevice(i)->GetObject<NrUeNetDevice>();
+                if (ueDev && ueDev->GetImsi() == imsi && ueDev->GetCellId() == this->GetCellId())
+                {
+                    dev = ueDev;
+                    break;
+                }
+            }
+            if (dev)
+                break;
+        }
+        if (!dev)
+            continue;
+        if (tp <= 0.0)
+            continue;
+
+        sumTp += tp;
+
+        auto itLoss = m_imsiToPacketLoss.find(imsi);
+        auto itDelay = m_imsiToDelay.find(imsi);
+        auto itJitter = m_imsiToJitter.find(imsi);
+
+        if (itLoss != m_imsiToPacketLoss.end())
+            sumLoss += itLoss->second;
+        if (itDelay != m_imsiToDelay.end())
+            sumDelay += itDelay->second;
+        if (itJitter != m_imsiToJitter.end())
+            sumJitter += itJitter->second;
+
+        ueCount++;
+    }
+
+    double avgTp = (ueCount > 0) ? sumTp / ueCount : 0.0;
+    double avgLoss = (ueCount > 0) ? sumLoss / ueCount : 0.0;
+    double avgDelay = (ueCount > 0) ? sumDelay / ueCount : 0.0;
+    double avgJitter = (ueCount > 0) ? sumJitter / ueCount : 0.0;
+
+    // Console log
+    NS_LOG_UNCOND("Cell stats-> gNB "
+                  << cellStats.cellId << " | PRB Usage: " << std::fixed << std::setprecision(0)
+                  << cellStats.prbUsagePercentage << " %"
+                  << " | Avg Last RB: " << std::fixed << std::setprecision(0)
+                  << cellStats.averageLastRb << " | Avg TP: " << std::fixed << std::setprecision(2)
+                  << avgTp << " Mbps"
+                  << " | Tot TP: " << std::fixed << std::setprecision(2) << sumTp << " Mbps"
+                  << " | Avg Loss: " << std::fixed << std::setprecision(2) << avgLoss * 100 << " %"
+                  << " | Avg Delay: " << std::fixed << std::setprecision(2) << avgDelay << " ms"
+                  << " | Avg Jitter: " << std::fixed << std::setprecision(2) << avgJitter << " ms"
+                  << " | UE Count: " << ueCount);
+
+    // CSV
+    traceFile << Simulator::Now().GetSeconds() << "," << cellStats.cellId << "," << std::fixed
+              << std::setprecision(2) << cellStats.prbUsagePercentage << "," << std::fixed
+              << std::setprecision(2) << cellStats.averageLastRb << "," << std::fixed
+              << std::setprecision(2) << avgTp << "," << std::fixed << std::setprecision(4)
+              << avgLoss << "," << std::fixed << std::setprecision(2) << avgDelay << ","
+              << std::fixed << std::setprecision(2) << avgJitter << "," << std::fixed
+              << std::setprecision(2) << sumTp << "," << ueCount << "\n";
+    traceFile.flush();
+    if (report_to_db)
+    {
+        if (avgTp > 0)
+        {
+            std::ostringstream payload;
+            payload << "cell_stats,cell_id=" << cellStats.cellId
+                    << " prb_usage=" << cellStats.prbUsagePercentage
+                    << ",avg_last_rb=" << cellStats.averageLastRb << ",avg_tp=" << avgTp
+                    << ",tot_tp=" << sumTp << ",avg_pkt_loss=" << avgLoss
+                    << ",avg_delay_ms=" << avgDelay << ",avg_jitter_ms=" << avgJitter
+                    << ",ue_count=" << ueCount // ✅ Added in DB export
+                    << " " << current_sim_time;
+
+            SendToInfluxDB(payload.str());
+        }
+        else
+        {
+            std::ostringstream payload;
+            payload << "cell_stats,cell_id=" << cellStats.cellId
+                    << " prb_usage=" << cellStats.prbUsagePercentage
+                    << ",avg_last_rb=" << cellStats.averageLastRb
+                    << ",ue_count=" << ueCount // ✅ Added in DB export
+                    << " " << current_sim_time;
+
+            SendToInfluxDB(payload.str());
+        }
+    }
+}
+
+void
+NrGnbNetDevice::UE_KPI_tracker()
+{
+    std::stringstream folderName;
+    folderName << "trace_" << sim_id;
+    if (!std::filesystem::exists(folderName.str()))
+    {
+        std::filesystem::create_directory(folderName.str());
+    }
+
+    std::stringstream ue_kpi_file;
+    ue_kpi_file << folderName.str() << "/Cell_" << this->GetCellId() << "_UE_stats_" << sim_id
+                << ".csv";
+
+    std::ofstream traceFile(ue_kpi_file.str(), std::ios::out | std::ios::app);
+    if (!traceFile.is_open())
+    {
+        std::cerr << "Error opening file for writing: " << ue_kpi_file.str() << std::endl;
+        return;
+    }
+
+    // Header
+    if (!headerWritten_UE[this->GetCellId()] && traceFile.tellp() == 0)
+    {
+        traceFile << "TS,IMSI,CELL_ID,SINR,RSRP,DL_TP,MCS,RI,CQI,"
+                  << "PKT_LOSS,DELAY_MS,JITTER_MS\n";
+        headerWritten_UE[this->GetCellId()] = true;
+    }
+
+    std::unordered_map<uint64_t, UEStats> ueStatsMap;
+
+    // Collect per UE
+    for (NodeList::Iterator it = NodeList::Begin(); it != NodeList::End(); ++it)
+    {
+        Ptr<Node> node = *it;
+        for (uint32_t i = 0; i < node->GetNDevices(); ++i)
+        {
+            Ptr<NrUeNetDevice> ueDevice = node->GetDevice(i)->GetObject<NrUeNetDevice>();
+            if (!ueDevice || ueDevice->GetCellId() != this->GetCellId())
+                continue;
+
+            Ptr<NrUePhy> uePhy = ueDevice->GetPhy(0);
+            if (!uePhy)
+                continue;
+
+            uePhy->ReportUeMeasurements();
+            double rsrp = uePhy->GetRsrp();
+            double sinrLin = uePhy->GetSINR();
+            double sinrDb = 10 * log10(sinrLin);
+
+            UeKpiInfo kpi = uePhy->GetUEkpi();
+
+            uint64_t imsi = ueDevice->GetImsi();
+
+            double dl_tp = 0.0;
+            auto itTp = m_imsiToTp.find(imsi);
+            if (itTp != m_imsiToTp.end())
+                dl_tp = itTp->second;
+
+            double pktLoss = 0.0, delayMs = 0.0, jitterMs = 0.0;
+            auto itLoss = m_imsiToPacketLoss.find(imsi);
+            auto itDelay = m_imsiToDelay.find(imsi);
+            auto itJitter = m_imsiToJitter.find(imsi);
+
+            if (itLoss != m_imsiToPacketLoss.end())
+                pktLoss = itLoss->second;
+            if (itDelay != m_imsiToDelay.end())
+                delayMs = itDelay->second;
+            if (itJitter != m_imsiToJitter.end())
+                jitterMs = itJitter->second;
+
+            UEStats& stats = ueStatsMap[imsi];
+            stats.IMSI = imsi;
+            stats.cell_id = this->GetCellId();
+            stats.SINR = sinrDb;
+            stats.RSRP = rsrp;
+            stats.dl_tp = dl_tp;
+            stats.mcs = kpi.mcs;
+            stats.ri = kpi.ri;
+            stats.cqi = kpi.cqi;
+            stats.pktLoss = pktLoss;
+            stats.delay = delayMs;
+            stats.jitter = jitterMs;
+            stats.tp_ongoing = (dl_tp > 0.0);
+        }
+    }
+
+    // Write + log
+    for (auto& pair : ueStatsMap)
+    {
+        UEStats& stats = pair.second;
+
+        NS_LOG_UNCOND("UE stats -> UE "
+                      << stats.IMSI << " | Cell ID: " << stats.cell_id // ✅ Explicit cell_id
+                      << " | SINR: " << std::fixed << std::setprecision(1) << stats.SINR << " dB"
+                      << " | RSRP: " << std::fixed << std::setprecision(0) << stats.RSRP << " dBm"
+                      << " | DL TP: " << std::fixed << std::setprecision(1) << stats.dl_tp
+                      << " Mbps"
+                      << " | MCS: " << static_cast<uint32_t>(stats.mcs)
+                      << " | RI: " << static_cast<uint32_t>(stats.ri)
+                      << " | CQI: " << static_cast<uint32_t>(stats.cqi) << " | Loss: " << std::fixed
+                      << std::setprecision(2) << stats.pktLoss * 100 << " %"
+                      << " | Delay: " << std::fixed << std::setprecision(2) << stats.delay << " ms"
+                      << " | Jitter: " << std::fixed << std::setprecision(2) << stats.jitter
+                      << " ms");
+
+        traceFile << Simulator::Now().GetSeconds() << "," << stats.IMSI << "," << stats.cell_id
+                  << "," // ✅ Explicit cell_id
+                  << std::fixed << std::setprecision(2) << stats.SINR << "," << std::fixed
+                  << std::setprecision(2) << stats.RSRP << "," << std::fixed << std::setprecision(2)
+                  << stats.dl_tp << "," << static_cast<uint32_t>(stats.mcs) << ","
+                  << static_cast<uint32_t>(stats.ri) << "," << static_cast<uint32_t>(stats.cqi)
+                  << "," << std::fixed << std::setprecision(4) << stats.pktLoss << "," << std::fixed
+                  << std::setprecision(2) << stats.delay << "," << std::fixed
+                  << std::setprecision(2) << stats.jitter << "\n";
+        if (report_to_db)
+        {
+            if (stats.tp_ongoing)
+            {
+                std::ostringstream payload;
+                payload << "ue_stats,ue=" << stats.IMSI
+                        << ",cell_id=" << stats.cell_id // ✅ Use cell_id consistently
+                        << " sinr=" << stats.SINR << ",rsrp=" << stats.RSRP
+                        << ",dl_tp=" << stats.dl_tp << ",mcs=" << static_cast<uint32_t>(stats.mcs)
+                        << ",ri=" << static_cast<uint32_t>(stats.ri)
+                        << ",cqi=" << static_cast<uint32_t>(stats.cqi)
+                        << ",pkt_loss=" << stats.pktLoss << ",delay_ms=" << stats.delay
+                        << ",jitter_ms=" << stats.jitter << " " << current_sim_time;
+                SendToInfluxDB(payload.str());
+            }
+            else
+            {
+                std::ostringstream payload;
+                payload << "ue_stats,ue=" << stats.IMSI
+                        << ",cell_id=" << stats.cell_id // ✅ Use cell_id consistently
+                        << " sinr=" << stats.SINR << ",rsrp=" << stats.RSRP << " "
+                        << current_sim_time;
+                SendToInfluxDB(payload.str());
+            }
+        }
+        stats.tp_ongoing = false;
+    }
+
+    traceFile.flush();
+
+    // Reset TP
+    for (auto& pair : m_imsiToTp)
+    {
+        pair.second = 0.0;
+    }
+
+    NS_LOG_UNCOND("---------------------------------------------");
+}
 } // namespace ns3

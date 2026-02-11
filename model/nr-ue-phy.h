@@ -25,6 +25,23 @@ class BeamManager;
 class BeamId;
 class NrUePowerControl;
 
+//trace nr kpis
+struct UeKpiInfo
+{
+    uint16_t rnti; ///< Radio Network Temporary Identifier
+    uint8_t  cqi;  ///< Channel Quality Indicator
+    uint8_t  mcs;  ///< Modulation and Coding Scheme
+    uint8_t  ri;   ///< Rank Indicator
+};
+
+// --- For averaging UE KPIs ---
+struct UeKpiAccumulator {
+    double cqiSum = 0.0;
+    double mcsSum = 0.0;
+    double riSum  = 0.0;
+    uint32_t count = 0;
+};
+
 /**
  * \ingroup ue-phy
  * \brief The UE PHY class
@@ -62,6 +79,8 @@ class NrUePhy : public NrPhy
     friend class MemberNrUeCphySapProvider<NrUePhy>;
 
   public:
+    //trace nr kpis
+    void ReportUeMeasurements();
     /**
      * \brief Get the object TypeId
      * \return the object type id
@@ -123,7 +142,13 @@ class NrUePhy : public NrPhy
      * \brief Returns the latest measured RSRP value
      * Called by NrUePowerControl.
      */
+    //trace nr kpis
+    double GetSINR() const;
     double GetRsrp() const;
+    double GetDLTP();
+    // Ptr<NrDlCqiMessage> GetMIMOkpi() const;
+
+    UeKpiInfo GetUEkpi() const;
 
     /**
      * \brief Get NR uplink power control entity
@@ -270,6 +295,8 @@ class NrUePhy : public NrPhy
      * \param [in] bwpId
      */
     typedef void (*DlDataSinrTracedCallback)(uint16_t, uint16_t, double, uint16_t);
+
+    typedef void (*CqiFeedbackTracedCallback)(uint16_t, uint8_t, uint8_t, uint8_t);
 
     /**
      *  TracedCallback signature for Ue Phy Received Control Messages.
@@ -481,7 +508,7 @@ class NrUePhy : public NrPhy
      * Initially executed at +0.200s, and then repeatedly executed with
      * periodicity as indicated by the *UeMeasFilterPeriod* attribute.
      */
-    void ReportUeMeasurements();
+    //void ReportUeMeasurements();
 
     /**
      * \brief Compute the AvgSinr (copied from NrUePhy)
@@ -832,6 +859,7 @@ class NrUePhy : public NrPhy
     uint8_t m_ulCtrlSyms{1}; //!< Number of CTRL symbols in UL
 
     double m_rsrp{0}; //!< The latest measured RSRP value
+    double m_avg_rsrp = 0;
 
     /// Summary results of measuring a specific cell. Used for layer-1 filtering.
     struct UeMeasurementsElement
@@ -874,6 +902,12 @@ class NrUePhy : public NrPhy
                    uint16_t,
                    uint16_t>
         m_reportPowerSpectralDensity; //!< Report the Tx power
+
+    /**
+     * The `CqiFeedbackTrace` trace source (CqiFeedbackTracedCallback). Trace
+     * information regarding the MIMO feedback, including RNTI, CQI, MCS and RI.
+     */
+    TracedCallback<uint16_t, uint8_t, uint8_t, uint8_t> m_cqiFeedbackTrace;
 
     /**
      * Trace information regarding RSRP
@@ -949,6 +983,15 @@ class NrUePhy : public NrPhy
     double m_sinrDbFrame;           ///< the average SINR per radio frame
     SpectrumValue m_ctrlSinrForRlf; ///< the CTRL SINR used for RLF detection
     bool m_enableRlfDetection;      ///< Flag to enable/disable RLF detection
+    uint8_t m_csiFeedbackType;      ///< CSI feedback type configured by NrHelper
+
+    double m_sinr_current; //for KPI tracking
+    double m_dl_tp;//for KPI tracking
+
+    std::vector<std::pair<double, uint64_t>> g_dlTbSizeForOneUe; //report for TP calculation
+    uint64_t t_last_TP_DL=0;//time for catching last TP calculation timestamp
+    mutable UeKpiInfo m_lastUeKpiInfo = {0, 0, 0, 0}; // In-class initializer
+    UeKpiAccumulator m_ueKpiAcc;
 };
 
 } // namespace ns3
