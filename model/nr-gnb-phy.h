@@ -413,6 +413,16 @@ class NrGnbPhy : public NrPhy
      */
     void ChangeToQuasiOmniBeamformingVector();
 
+
+    struct RbStats {
+      uint16_t cellId = 0;         // Cell ID
+      double prbUsagePercentage = 0; // PRB usage percentage
+      double averageLastRb= 0;    // Store the average value of the last RBG
+      int iterations = 0;
+    };
+
+    RbStats GetRBStats();
+
   protected:
     /**
      * \brief DoDispose method inherited from Object
@@ -833,6 +843,8 @@ class NrGnbPhy : public NrPhy
     bool m_isPrimary{false}; //!< Is this PHY a primary phy?
 
     Time m_lastBfChange; //!< Saves the timestamp when the beamforming vector changes.
+
+    mutable RbStats m_RbStats; // store RBStats
 };
 
 } // namespace ns3

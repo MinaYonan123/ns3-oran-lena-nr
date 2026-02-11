@@ -10,6 +10,10 @@
 
 #include "ns3/traced-callback.h"
 #include <ns3/oran-interface.h>
+
+#include "ns3/flow-monitor-module.h"     // for Ptr<FlowMonitor>
+#include "ns3/ipv4-flow-classifier.h"    // for Ptr<Ipv4FlowClassifier>
+
 namespace ns3
 {
 
@@ -141,6 +145,40 @@ class NrGnbNetDevice : public NrNetDevice
      * \return uplink earfcn
      */
     uint32_t GetCellIdUlEarfcn(uint16_t cellId) const;
+
+    //trace nr kpis
+
+    struct CellStats {
+        uint16_t cellId = 0;         // Cell ID
+        double prbUsagePercentage = 0; // PRB usage percentUEStats age
+        double averageLastRb= 0;    // Store the average value of the last RBG
+    };
+
+    struct UEStats {
+        uint64_t IMSI;
+        double cell_id;
+        double SINR;
+        double RSRP;
+        double dl_tp;
+        uint32_t mcs;
+        uint32_t ri;
+        uint32_t cqi;
+        double pktLoss;
+        double delay;
+        double jitter;
+        bool tp_ongoing;
+    };
+
+    void Cell_KPI_tracker();
+
+    void UE_KPI_tracker();
+
+    void SetFlowMonitor(ns3::Ptr<ns3::FlowMonitor> monitor);
+    void SetIpv4FlowClassifier(ns3::Ptr<ns3::Ipv4FlowClassifier> classifier);
+    void SampleThroughput(Ptr<FlowMonitor> monitor,
+                          Ptr<Ipv4FlowClassifier> classifier,
+                          double intervalSec);
+
     void SetE2Termination(Ptr<E2Termination> e2term);
     Ptr<E2Termination> GetE2Termination() const;
     void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu);
@@ -169,6 +207,21 @@ class NrGnbNetDevice : public NrNetDevice
     double e2_func_id; //to pass kpm function id
     bool m_stopSendingMessages;
     bool m_isReportingEnabled;
+
+    //trace nr kpis
+    bool m_isCellConfigured{false}; ///< variable to check whether the RRC has been configured
+    uint64_t sim_id;
+    bool report_to_db = false;
+
+    ns3::Ptr<ns3::FlowMonitor> m_flowMonitor;            // store monitor if needed
+    ns3::Ptr<ns3::Ipv4FlowClassifier> m_flowClassifier; // store classifier
+    std::map<ns3::FlowId, uint64_t> m_prevRxBytes;
+    std::map<ns3::FlowId, uint32_t> m_flowIdToImsi; // map FlowId -> IMSI index (1..N)
+    std::map<uint32_t, double> m_imsiToTp;         // map IMSI -> last throughput (Mbps)
+    std::map<uint32_t, double> m_imsiToDelay;
+    std::map<uint32_t, double> m_imsiToJitter;
+    std::map<uint32_t, double> m_imsiToPacketLoss;
+    uint32_t m_nextImsiIndex = 1;
 };
 
 } // namespace ns3

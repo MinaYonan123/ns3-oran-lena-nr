@@ -1002,6 +1002,26 @@ NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo& allocInfo) const
                        GetSymbolsPerSlot() - dataSym,
                        GetBwpId(),
                        GetCellId());
+
+    // Get total OFDM symbols per slot and total REs per RB
+    uint32_t totalSymbols = GetSymbolsPerSlot(); // Typically 14 for normal CP
+    uint32_t totalRePerRb = GetNumRbPerRbg() * totalSymbols;
+
+    // Calculate normalized RB usage from RE usage
+    double dataRbUsage = static_cast<double>(dataReg) / totalRePerRb;
+    double ctrlRbUsage = static_cast<double>(ctrlReg) / totalRePerRb;
+    double totalRbUsage = dataRbUsage + ctrlRbUsage;
+
+    // Convert to PRB usage percentage
+    double prbUsagePercentage = totalRbUsage / availRb * 100.0;
+
+    // Update metrics
+    RbStats rbStats = m_RbStats; // Use existing stats object
+    rbStats.prbUsagePercentage += prbUsagePercentage;
+    rbStats.averageLastRb += totalRbUsage;
+    rbStats.iterations += 1;
+
+    m_RbStats = rbStats;
 }
 
 void
@@ -1070,6 +1090,22 @@ NrGnbPhy::PrepareRbgAllocationMap(const std::deque<VarTtiAllocInfo>& allocations
     }
 
     m_rbgAllocationPerSymDataStat.clear();
+}
+NrGnbPhy::RbStats NrGnbPhy::GetRBStats() {
+
+    RbStats rbStats_temp = {0};
+
+    rbStats_temp.cellId = m_RbStats.cellId;
+    rbStats_temp.prbUsagePercentage =
+        m_RbStats.prbUsagePercentage / m_RbStats.iterations;
+    rbStats_temp.averageLastRb = m_RbStats.averageLastRb / m_RbStats.iterations;
+    // NS_LOG_UNCOND("PRB_Usage(%)=" << rbStats_temp.prbUsagePercentage);
+
+    m_RbStats.prbUsagePercentage = 0;
+    m_RbStats.averageLastRb = 0;
+    m_RbStats.iterations = 0;
+
+    return rbStats_temp;
 }
 
 void
