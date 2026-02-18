@@ -626,10 +626,50 @@ NrGnbPhy::SetTxPower(double pow)
     NS_LOG_DEBUG("TxPower1: " << pow);
 }
 
+void
+NrGnbPhy::SetPortPowerScaling(double scalingFactor)
+{
+    NS_LOG_FUNCTION(this << scalingFactor);
+    NS_ASSERT_MSG(scalingFactor >= 0.0 && scalingFactor <= 1.0, 
+                  "Port power scaling must be between 0.0 and 1.0");
+    m_portPowerScaling = scalingFactor;
+    NS_LOG_INFO("Port power scaling set to: " << scalingFactor 
+                << " for gNB PHY (base power: " << m_txPower << " dBm)");
+}
+
+double
+NrGnbPhy::GetPortPowerScaling() const
+{
+    NS_LOG_FUNCTION(this);
+    return m_portPowerScaling;
+}
+
+double
+NrGnbPhy::GetEffectiveTxPower() const
+{
+    NS_LOG_FUNCTION(this);
+    
+    // Calculate effective power: base_power * port_scaling
+    // In linear domain: P_eff = P_base * scaling
+    // In dB: P_eff_dB = P_base_dB + 10*log10(scaling)
+    
+    if (m_portPowerScaling <= 0.0)
+    {
+        return -std::numeric_limits<double>::infinity(); // No power if all ports off
+    }
+    
+    double effectivePowerDbm = m_txPower + 10.0 * std::log10(m_portPowerScaling);
+    
+    NS_LOG_DEBUG("Effective TX power: " << effectivePowerDbm << " dBm "
+                 << "(base: " << m_txPower << " dBm, scaling: " << m_portPowerScaling << ")");
+    
+    return effectivePowerDbm;
+}
+
 double
 NrGnbPhy::GetTxPower() const
 {
-    return m_txPower;
+    return GetEffectiveTxPower();
 }
 
 void
@@ -1094,23 +1134,6 @@ NrGnbPhy::PrepareRbgAllocationMap(const std::deque<VarTtiAllocInfo>& allocations
 
     m_rbgAllocationPerSymDataStat.clear();
 }
-NrGnbPhy::RbStats NrGnbPhy::GetRBStats() {
-
-    RbStats rbStats_temp = {0};
-
-    rbStats_temp.cellId = m_RbStats.cellId;
-    rbStats_temp.prbUsagePercentage =
-        m_RbStats.prbUsagePercentage / m_RbStats.iterations;
-    rbStats_temp.averageLastRb = m_RbStats.averageLastRb / m_RbStats.iterations;
-    // NS_LOG_UNCOND("PRB_Usage(%)=" << rbStats_temp.prbUsagePercentage);
-
-    m_RbStats.prbUsagePercentage = 0;
-    m_RbStats.averageLastRb = 0;
-    m_RbStats.iterations = 0;
-
-    return rbStats_temp;
-}
-
 NrGnbPhy::RbStats NrGnbPhy::GetRBStats() {
 
     RbStats rbStats_temp = {0};

@@ -307,50 +307,6 @@ NrUePhy::GetRsrp() const
         return info;
     }
 
-double
-NrUePhy::GetSINR() const
-{
-    if (m_sinrCount == 0)
-        return m_sinr_current;
-
-    double tmp_sinr_return = m_sinrAccum / m_sinrCount;
-    m_sinrAccum = 0.0;
-    m_sinrCount = 0;
-    return tmp_sinr_return;
-}
-
-double
-NrUePhy::GetDLTP()
-{
-    double windowDuration = Simulator::Now().GetSeconds() - t_last_TP_DL;
-    double windowStart = t_last_TP_DL;
-
-    uint64_t totalBytes = 0;
-
-    // NS_LOG_UNCOND("TP DEBUG -> Time now: " << Simulator::Now().GetSeconds()
-    // << ", Last TP time: " << t_last_TP_DL
-    //  << ", Window Duration: " << windowDuration);
-
-    for (auto& tb : g_dlTbSizeForOneUe)
-    {
-        //  NS_LOG_UNCOND("TP DEBUG -> TB Timestamp: " << tb.first << ", Size: " << tb.second);
-        if (tb.first >= windowStart)
-        {
-            totalBytes += tb.second;
-        }
-    }
-
-    // NS_LOG_UNCOND("TP DEBUG -> Total Bytes: " << totalBytes);
-
-    double throughput = (windowDuration > 0) ? (totalBytes * 8.0) / (windowDuration * 1e6) : 0;
-
-    // NS_LOG_UNCOND("TP DEBUG -> Throughput: " << throughput << " Mbps");
-
-    g_dlTbSizeForOneUe.clear();
-
-    return throughput;
-}
-
 /*
 Ptr<NrDlCqiMessage> NrUePhy::GetMIMOkpi() const
 {
@@ -359,33 +315,7 @@ Ptr<NrDlCqiMessage> NrUePhy::GetMIMOkpi() const
   return prev;
 }
 */
-UeKpiInfo
-NrUePhy::GetUEkpi() const
-{
-    UeKpiInfo info;
 
-    if (m_ueKpiAcc.count > 0)
-    {
-        info.rnti = m_lastUeKpiInfo.rnti;
-        info.cqi = static_cast<uint8_t>(m_ueKpiAcc.cqiSum / m_ueKpiAcc.count);
-        info.mcs = static_cast<uint8_t>(m_ueKpiAcc.mcsSum / m_ueKpiAcc.count);
-        info.ri = static_cast<uint8_t>(m_ueKpiAcc.riSum / m_ueKpiAcc.count);
-    }
-    else
-    {
-        // no data yet
-        info.rnti = m_lastUeKpiInfo.rnti;
-        info.cqi = 0;
-        info.mcs = 0;
-        info.ri = 1;
-    }
-
-    // === Reset accumulators after retrieval (optional) ===
-    const_cast<NrUePhy*>(this)->m_ueKpiAcc = {};
-    const_cast<NrUePhy*>(this)->m_lastUeKpiInfo = {};
-
-    return info;
-}
 
 Ptr<NrUePowerControl>
 NrUePhy::GetUplinkPowerControl() const

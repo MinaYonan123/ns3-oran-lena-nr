@@ -213,7 +213,23 @@ class NrGnbPhy : public NrPhy
      * \return the TX power of the gNB
      */
     double GetTxPower() const override;
+    /** 
+    * \brief Set port power scaling factor for effective transmit power calculation
+    * \param scalingFactor Port power scaling factor (0.0 to 1.0)
+    */
+    void SetPortPowerScaling(double scalingFactor);
 
+    /**
+    * \brief Get port power scaling factor
+    * \return Port power scaling factor
+    */
+    double GetPortPowerScaling() const;
+
+    /**
+    * \brief Get effective transmit power accounting for port power allocation
+    * \return Effective TX power in dBm (base power * port scaling)
+    */
+    double GetEffectiveTxPower() const;
     /**
      * \brief Set the Tx power spectral density based on the RB index vector
      * \param rbIndexVector vector of the index of the RB (in SpectrumValue array)
@@ -472,7 +488,8 @@ class NrGnbPhy : public NrPhy
     NrFhPhySapProvider* m_nrFhPhySapProvider{nullptr}; //!< FH Control SAP provider
 
   private:
-
+    private:
+    double m_portPowerScaling{1.0}; //!< Port power scaling factor
       double energyAccumulated = 0.0; // in Joules
 
     /**

@@ -157,29 +157,6 @@ class NrGnbNetDevice : public NrNetDevice
      */
     uint32_t GetCellIdUlEarfcn(uint16_t cellId) const;
 
-    //trace nr kpis
-
-    struct CellStats {
-        uint16_t cellId = 0;         // Cell ID
-        double prbUsagePercentage = 0; // PRB usage percentUEStats age
-        double averageLastRb= 0;    // Store the average value of the last RBG
-    };
-
-    struct UEStats {
-        uint64_t IMSI;
-        double cell_id;
-        double SINR;
-        double RSRP;
-        double dl_tp;
-        uint32_t mcs;
-        uint32_t ri;
-        uint32_t cqi;
-        double pktLoss;
-        double delay;
-        double jitter;
-        bool tp_ongoing;
-    };
-
     void Cell_KPI_tracker();
 
     void UE_KPI_tracker();
@@ -192,6 +169,7 @@ class NrGnbNetDevice : public NrNetDevice
     std::string GetImsiString(uint64_t imsi);
     void BuildAndSendReportMessage (E2Termination::RicSubscriptionRequest_rval_s params);
     Ptr<KpmIndicationMessage> BuildRicIndicationMessageCuUp(std::string plmId);
+    void BuildGUICuUp (); // Periodic GUI reporting for CSV logging
     void SetE2Termination(Ptr<E2Termination> e2term); //// Added to set the E2 termination object
     Ptr<E2Termination> GetE2Termination() const; //// Added to get the E2 termination object
     void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle KPM subscription requests
@@ -228,21 +206,11 @@ class NrGnbNetDevice : public NrNetDevice
         int cell_id = 0;
     };
 
-    void Cell_KPI_tracker();
-
-    void UE_KPI_tracker();
-
-    void SetFlowMonitor(ns3::Ptr<ns3::FlowMonitor> monitor);
-    void SetIpv4FlowClassifier(ns3::Ptr<ns3::Ipv4FlowClassifier> classifier);
-    void SampleThroughput(Ptr<FlowMonitor> monitor,
-                          Ptr<Ipv4FlowClassifier> classifier,
-                          double intervalSec);
-
     /**
-     * \brief Set port power allocation for all BWPs
+     * \brief Set port power allocatiSetPortPoweron for all BWPs
      * \param portPowerVec Vector of port power values (must sum to ~1.0)
      */
-    void SetPortPower(const std::vector<double>& portPowerVec);
+    void SetPortPower (const std::vector<double>& portPowerVec);
 
     /**
      * \brief Get current port power allocation from first BWP
@@ -285,28 +253,19 @@ class NrGnbNetDevice : public NrNetDevice
     Ptr<NrGnbComponentCarrierManager>
         m_componentCarrierManager; ///< the component carrier manager of this gNB
     Ptr<NrFhControl> m_nrFhControl;
-    Ptr<E2Termination> m_e2term;  /// A pointer to the E2 termination object
+    Ptr<E2Termination> m_e2term;  /// A pointer to the E2 termination object 
     double  rc_e2_func_id ; // to RC  function id
     double e2_func_id; //to pass kpm function id
     double ccc_func_id; //to pass ccc function id
       
     bool m_stopSendingMessages;
     bool m_isReportingEnabled;
-
-    //trace nr kpis
-    bool m_isCellConfigured{false}; ///< variable to check whether the RRC has been configured
-    uint64_t sim_id;
-    bool report_to_db = false;
-
-    ns3::Ptr<ns3::FlowMonitor> m_flowMonitor;            // store monitor if needed
-    ns3::Ptr<ns3::Ipv4FlowClassifier> m_flowClassifier; // store classifier
-    std::map<ns3::FlowId, uint64_t> m_prevRxBytes;
-    std::map<ns3::FlowId, uint32_t> m_flowIdToImsi; // map FlowId -> IMSI index (1..N)
-    std::map<uint32_t, double> m_imsiToTp;         // map IMSI -> last throughput (Mbps)
-    std::map<uint32_t, double> m_imsiToDelay;
-    std::map<uint32_t, double> m_imsiToJitter;
-    std::map<uint32_t, double> m_imsiToPacketLoss;
-    uint32_t m_nextImsiIndex = 1;
+    bool m_flagControlMessageReceived;
+    bool m_flagIndicationSent; 
+    std::map<uint64_t, double> m_prevTxBytesPerUe;
+    std::map<uint64_t, double> m_lastThroughputPerUe; ///< Last calculated throughput per UE (Mbps)
+    uint16_t m_NewportsOn;
+    uint16_t m_NewportsOff;
     uint64_t m_startTime;///// Added to set the start time
     Time m_checkPeriod;
     Ptr<NrBearerStatsCalculator> m_e2PdcpStatsCalculator;
@@ -329,8 +288,23 @@ class NrGnbNetDevice : public NrNetDevice
     uint32_t m_nextImsiIndex = 1;
     std::vector<double> m_powerSamples;
     std::vector<double> m_portPowerConfig; ///< Configured port power allocation
-
-
+    double m_currentPowerWatts; 
+// Power consumption tracking for comparison
+    bool m_xAppActive; ///< Flag to indicate if xApp has modified port configuration
+    double m_baselineMinPower; ///< Minimum power without xApp (only throughput changes)
+    double m_baselineMaxPower; ///< Maximum power without xApp (only throughput changes)
+    double m_xAppMinPower; ///< Minimum power with xApp (throughput + port changes)
+    double m_xAppMaxPower; ///< Maximum power with xApp (throughput + port changes)
+    double m_baselineCurrentPower; ///< Current power in baseline scenario (calculated)
+    double m_xAppCurrentPower; ///< Current power with xApp (actual measured)
+    Time m_xAppActivationTime; ///< Time when xApp first modified ports
+    // Add after existing power tracking variables (around line 302)
+    double m_baselineAccumulatedPower; ///< Accumulated power during baseline period (0-25s)
+    uint32_t m_baselineSampleCount; ///< Number of samples during baseline period
+    double m_xAppAccumulatedPower; ///< Accumulated power during xApp period (after 25s)
+    uint32_t m_xAppSampleCount; ///< Number of samples during xApp period
+    double m_baselineAvgPower; ///< Average power during baseline period
+    double m_xAppAvgPower; ///< Average power during xApp period
 };
 
 } // namespace ns3
