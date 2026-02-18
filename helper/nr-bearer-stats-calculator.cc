@@ -394,6 +394,7 @@ NrBearerStatsCalculator::ResetResultsForImsiLcid (uint64_t imsi, uint16_t lcid)
 {
   NS_LOG_FUNCTION (this);
 
+  auto dlTxPacketsEntry = m_dlTxPackets.find(nr::ImsiLcidPair_t(imsi, lcid));
   auto ulTxPacketsEntry = m_ulTxPackets.find(nr::ImsiLcidPair_t(imsi, lcid));
   if(ulTxPacketsEntry != m_ulTxPackets.end())
   {
@@ -425,7 +426,6 @@ NrBearerStatsCalculator::ResetResultsForImsiLcid (uint64_t imsi, uint16_t lcid)
     m_ulPduSize.erase (ulPduSizeEntry);
   }
 
-  auto dlTxPacketsEntry = m_dlTxPackets.find(nr::ImsiLcidPair_t(imsi, lcid));
   if(dlTxPacketsEntry != m_dlTxPackets.end())
   {
     m_dlTxPackets.erase (dlTxPacketsEntry);

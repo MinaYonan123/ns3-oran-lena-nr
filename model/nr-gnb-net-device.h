@@ -161,6 +161,7 @@ class NrGnbNetDevice : public NrNetDevice
     std::string GetImsiString(uint64_t imsi);
     void BuildAndSendReportMessage (E2Termination::RicSubscriptionRequest_rval_s params);
     Ptr<KpmIndicationMessage> BuildRicIndicationMessageCuUp(std::string plmId);
+    void BuildGUICuUp (); // Periodic GUI reporting for CSV logging
     void SetE2Termination(Ptr<E2Termination> e2term); //// Added to set the E2 termination object
     Ptr<E2Termination> GetE2Termination() const; //// Added to get the E2 termination object
     void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle KPM subscription requests
@@ -261,6 +262,12 @@ class NrGnbNetDevice : public NrNetDevice
       
     bool m_stopSendingMessages;
     bool m_isReportingEnabled;
+    bool m_flagControlMessageReceived;
+    bool m_flagIndicationSent; 
+    std::map<uint64_t, double> m_prevTxBytesPerUe;
+    std::map<uint64_t, double> m_lastThroughputPerUe; ///< Last calculated throughput per UE (Mbps)
+    uint16_t m_NewportsOn;
+    uint16_t m_NewportsOff;
     uint64_t m_startTime;///// Added to set the start time
     Time m_checkPeriod;
     Ptr<NrBearerStatsCalculator> m_e2PdcpStatsCalculator;
@@ -283,8 +290,23 @@ class NrGnbNetDevice : public NrNetDevice
     uint32_t m_nextImsiIndex = 1;
     std::vector<double> m_powerSamples;
     std::vector<double> m_portPowerConfig; ///< Configured port power allocation
-
-
+    double m_currentPowerWatts; 
+// Power consumption tracking for comparison
+    bool m_xAppActive; ///< Flag to indicate if xApp has modified port configuration
+    double m_baselineMinPower; ///< Minimum power without xApp (only throughput changes)
+    double m_baselineMaxPower; ///< Maximum power without xApp (only throughput changes)
+    double m_xAppMinPower; ///< Minimum power with xApp (throughput + port changes)
+    double m_xAppMaxPower; ///< Maximum power with xApp (throughput + port changes)
+    double m_baselineCurrentPower; ///< Current power in baseline scenario (calculated)
+    double m_xAppCurrentPower; ///< Current power with xApp (actual measured)
+    Time m_xAppActivationTime; ///< Time when xApp first modified ports
+    // Add after existing power tracking variables (around line 302)
+    double m_baselineAccumulatedPower; ///< Accumulated power during baseline period (0-25s)
+    uint32_t m_baselineSampleCount; ///< Number of samples during baseline period
+    double m_xAppAccumulatedPower; ///< Accumulated power during xApp period (after 25s)
+    uint32_t m_xAppSampleCount; ///< Number of samples during xApp period
+    double m_baselineAvgPower; ///< Average power during baseline period
+    double m_xAppAvgPower; ///< Average power during xApp period
 };
 
 } // namespace ns3

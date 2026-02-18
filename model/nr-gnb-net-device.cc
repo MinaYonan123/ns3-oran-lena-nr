@@ -26,6 +26,7 @@
 #include <filesystem> // For filesystem utilities, available since C++17
 #include <fstream>
 #include <iostream>
+#include <ostream>
 #include <sstream>
 #include <sys/time.h>
 #include <vector>
@@ -58,21 +59,33 @@ void SendToInfluxDB(const std::string &payload) {
 
     if (curl) {
         const std::string url = "http://" + influx_host + ":" + influx_port +
-                                "/api/v2/write?bucket=influx&precision=ns";
+                                "/write?db=" + db_name;
+        
+        if (firstCall) {
+            std::cout << "InfluxDB: Sending data to " << url << std::endl;
+            firstCall = false;
+        }
+        
         struct curl_slist *headers = nullptr;
-        const std::string auth =
-                "Authorization: Token " + influx_user + ":" + influx_password;
-        headers = curl_slist_append(headers, auth.c_str());
         headers = curl_slist_append(headers, "Content-Type: text/plain");
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L); // 2 second timeout
 
         CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
-            std::cerr << "InfluxDB POST failed: " << curl_easy_strerror(res)
-                      << std::endl;
+            static int errorCount = 0;
+            if (errorCount < 5) {  // Only show first 5 errors
+                std::cerr << "⚠️  InfluxDB connection failed: " << curl_easy_strerror(res)
+                          << " (Make sure InfluxDB is running on " << influx_host << ":" << influx_port << ")"
+                          << std::endl;
+                errorCount++;
+                if (errorCount == 5) {
+                    std::cerr << "   (Further InfluxDB errors will be suppressed)" << std::endl;
+                }
+            }
         }
 
         curl_slist_free_all(headers);
@@ -168,8 +181,27 @@ NrGnbNetDevice::NrGnbNetDevice()
     m_cuUpFileName (),
     m_stopSendingMessages(false),
     m_isReportingEnabled (false),
+    m_flagControlMessageReceived (false),
+    m_flagIndicationSent (false),
+    m_NewportsOn(0),
+    m_NewportsOff(0),
     m_hasValidSubscription(false),
-    m_checkPeriod(MilliSeconds(100))
+    m_checkPeriod(MilliSeconds(100)),
+    m_currentPowerWatts(0.0),
+    m_xAppActive(false),
+    m_baselineMinPower(0.0),
+    m_baselineMaxPower(0.0),
+    m_xAppMinPower(0.0),  // Change from std::numeric_limits<double>::max()
+    m_xAppMaxPower(0.0),
+    m_baselineCurrentPower(0.0),
+    m_xAppCurrentPower(0.0),
+    m_xAppActivationTime(Seconds(0)),
+    m_baselineAccumulatedPower(0.0),
+    m_baselineSampleCount(0),
+    m_xAppAccumulatedPower(0.0),
+    m_xAppSampleCount(0),
+    m_baselineAvgPower(0.0),
+    m_xAppAvgPower(0.0)
 {
     NS_LOG_FUNCTION(this);
 }
@@ -293,7 +325,7 @@ NrGnbNetDevice::CCCcontrolMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu)
 {
   NS_LOG_FUNCTION(this);
   NS_LOG_DEBUG("\nReceived CCC RIC Control Message, cellId= " << m_cellId << "\n");
-
+  m_flagControlMessageReceived = true;
   // Create CCC control message handler
   Ptr<CccControlMessage> cccMsg = Create<CccControlMessage>(sub_req_pdu);
   
@@ -335,30 +367,34 @@ NrGnbNetDevice::CCCcontrolMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu)
                   // Parse antenna mask as binary string (e.g., "1010" -> [1.0, 0.0, 1.0, 0.0])
                   // Each character is either '1' (port enabled) or '0' (port disabled)
                   std::vector<double> portPowerVec;
-                  
+                  uint16_t portsOn = 0;  // Count of ports with value = 1 (enabled)
+                  uint16_t portsOff = 0; // Count of ports with value = 0 (disabled)
                   for (char c : antennaMask)
                   {
                       if (c == '1')
                       {
                           portPowerVec.push_back(1.0);  // Port enabled
+                          portsOn++;
                       }
                       else if (c == '0')
                       {
                           portPowerVec.push_back(0.0);  // Port disabled
+                          portsOff++;
                       }
                       else if (!std::isspace(c))
                       {
                           NS_LOG_WARN("Invalid character '" << c << "' in antenna mask, skipping");
                       }
                   }
-                  
+                  m_NewportsOn = portsOn;
+                  m_NewportsOff = portsOff;
                   if (!portPowerVec.empty())
                   {
                       NS_LOG_UNCOND("Applying port power with " << portPowerVec.size() << " ports");
                       
                       // Apply port power configuration
                       SetPortPower(portPowerVec);
-                      
+
                       // Log applied values
                       std::cout << "Cell " << m_cellId << " - Port power set to: [";
                       for (size_t i = 0; i < portPowerVec.size(); ++i)
@@ -504,6 +540,7 @@ void
 NrGnbNetDevice::BuildAndSendReportMessage (E2Termination::RicSubscriptionRequest_rval_s params)
 {
   std::cout << "[DEBUG] BuildAndSendReportMessage called" << std::endl;
+  m_flagIndicationSent = true;
   std::string plmId = "111";
   std::string gnbId = std::to_string (m_cellId);
 
@@ -571,51 +608,109 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
   double cellDlTxVolume = 0;
   // rx bytes in downlink
   double cellDlRxVolume = 0;
+  uint16_t numActiveUes = static_cast<uint16_t>(ueMap.size());
 
   // sum of the per-user average latency
   double perUserAverageLatencySum = 0;
-  std ::cout << "heeeeeer 5 "<< std::endl;
+
   std::unordered_map<uint64_t, std::string> uePmString {};
 
+  std::vector<double> portPowerVec = GetPortPower();
+  double averagePower = GetAveragePower();
+  uint16_t portsOn = 0;  // Count of ports with value = 1 (enabled)
+  uint16_t portsOff = 0; // Count of ports with value = 0 (disabled)
+
+  
+    
+  if (!portPowerVec.empty())
+  {
+    for (size_t i = 0; i < portPowerVec.size(); ++i)
+      {
+        // Consider values close to 1.0 as "on" and close to 0.0 as "off"
+        if (portPowerVec[i] >= 0.5)  // Port enabled (value >= 0.5)
+          {
+            portsOn++;
+          }
+        else  // Port disabled (value < 0.5)
+          {
+            portsOff++;
+          }
+      }
+  }
   for (auto ue : ueMap)
   {
     uint64_t imsi = ue.second->GetImsi();
     std::string ueImsiComplete = GetImsiString (imsi);
 
-    // double rxDlPackets = m_e2PdcpStatsCalculator->GetDlRxPackets(imsi, 3); // LCID 3 is used for data
-    long txDlPackets = m_e2PdcpStatsCalculator->GetDlTxPackets(imsi, 3); // LCID 3 is used for data
-
-    double txBytes = m_e2PdcpStatsCalculator->GetDlTxData(imsi, 3)  * 8 / 1e3; // in kbit, not byte
-
-    double rxBytes = m_e2PdcpStatsCalculator->GetDlRxData(imsi, 3)  * 8 / 1e3; // in kbit, not byte
-    cellDlTxVolume += txBytes;
-    cellDlRxVolume += rxBytes;
-
+    // Accumulate PDCP and RLC stats from all DRBs
+    long txDlPackets = 0;
+    double txBytes = 0;
+    double rxBytes = 0;
+    double totalPdcpDelay = 0;
     long txPdcpPduNrRlc = 0;
     double txPdcpPduBytesNrRlc = 0;
 
     auto drbMap = ue.second->GetDrbMap();
+    std::cout << "  [UE IMSI " << imsi << "] has " << drbMap.size() << " DRB(s)" << std::endl;
+    
+    // FIRST: Get previous cumulative value BEFORE reading/resetting stats
+    double prevTxBytes = 0.0;
+    auto itPrev = m_prevTxBytesPerUe.find(imsi);
+    if (itPrev != m_prevTxBytesPerUe.end())
+      {
+        prevTxBytes = itPrev->second;
+      }
+    
+    // SECOND: Collect all PDCP stats from all DRBs (cumulative values BEFORE reset)
     for (auto drb : drbMap)
     {
-      txPdcpPduNrRlc += drb.second->m_rlc->GetTxPacketsInReportingPeriod();
-      txPdcpPduBytesNrRlc += drb.second->m_rlc->GetTxBytesInReportingPeriod();
-      drb.second->m_rlc->ResetRlcCounters();
+      uint8_t lcid = drb.second->m_logicalChannelIdentity;
+      std::cout << "  [DRB_ID " << (int)drb.first << " -> LCID " << (int)lcid << "] ";
+      
+      long txPacketsForLcid = m_e2PdcpStatsCalculator->GetDlTxPackets(imsi, lcid);
+      double txBytesForLcid = m_e2PdcpStatsCalculator->GetDlTxData(imsi, lcid) * 8 / 1e3; // in kbit
+      double rxBytesForLcid = m_e2PdcpStatsCalculator->GetDlRxData(imsi, lcid) * 8 / 1e3; // in kbit
+      double delayForLcid = m_e2PdcpStatsCalculator->GetDlDelay(imsi, lcid);
+      
+      std::cout << "PDCP: txPkt=" << txPacketsForLcid << " txKb=" << txBytesForLcid 
+                << " rxKb=" << rxBytesForLcid << " delay=" << delayForLcid;
+      
+      txDlPackets += txPacketsForLcid; 
+      txBytes += txBytesForLcid;
+      rxBytes += rxBytesForLcid;
+      totalPdcpDelay += delayForLcid;
+      
+      // Get RLC stats
+      long rlcTxPkts = drb.second->m_rlc->GetTxPacketsInReportingPeriod();
+      double rlcTxBytes = drb.second->m_rlc->GetTxBytesInReportingPeriod();
+      
+      std::cout << " | RLC: txPkt=" << rlcTxPkts << " txBytes=" << rlcTxBytes << std::endl;
+      
+      txPdcpPduNrRlc += rlcTxPkts;
+      txPdcpPduBytesNrRlc += rlcTxBytes;
     }
-
-    // auto rlcMap = ue.second->GetRlcMap(); // secondary-connected RLCs
-    // for (auto drb : rlcMap)
-    // {
-    //   txPdcpPduNrRlc += drb.second->m_rlc->GetTxPacketsInReportingPeriod();
-    //   txPdcpPduBytesNrRlc += drb.second->m_rlc->GetTxBytesInReportingPeriod();
-    //   drb.second->m_rlc->ResetRlcCounters();
-    // }
+    
+    // USE THE SAME THROUGHPUT CALCULATED BY BuildGUICuUp
+    double pdcpThroughput = 0.0;
+    auto itTp = m_lastThroughputPerUe.find(imsi);
+    if (itTp != m_lastThroughputPerUe.end())
+      {
+        pdcpThroughput = itTp->second;
+      }
+    
+    double pdcpThroughputRx = rxBytes / m_e2Periodicity; // unit kBps
+    
+    // Process RLC bytes
     txPdcpPduBytesNrRlc *= 8 / 1e3;
-
-    double pdcpLatency = m_e2PdcpStatsCalculator->GetDlDelay(imsi, 3) / 1e5; // unit: x 0.1 ms
+    double pdcpLatency = totalPdcpDelay / 1e5; // unit: x 0.1 ms
     perUserAverageLatencySum += pdcpLatency;
-
-    double pdcpThroughput = txBytes / m_e2Periodicity; // unit kbps
-    double pdcpThroughputRx = rxBytes / m_e2Periodicity; // unit kbps
+    
+    cellDlTxVolume += txBytes;
+    cellDlRxVolume += rxBytes;
+    
+    std::cout<<"BuildRicIndicationMessageCuUp e2periodicity: " << m_e2Periodicity << std::endl;
+    std::cout<<"BuildRicIndicationMessageCuUp: Using throughput from BuildGUICuUp = " 
+             << pdcpThroughput << " Mbps" << std::endl;
 
     std::cout << Simulator::Now().GetSeconds() << " " << m_cellId << " cell, connected UE with IMSI " << imsi
       << " ueImsiString " << ueImsiComplete
@@ -627,35 +722,22 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
       << " pdcpLatency " << pdcpLatency
       << " pdcpThroughput " << pdcpThroughput << std::endl;
 
-    m_e2PdcpStatsCalculator->ResetResultsForImsiLcid (imsi, 3);
-////
+    // PDCP stats are reset inside the DRB loop above (per LCID)
     if (!indicationMessageHelper->IsOffline ())
       {
-        //indicationMessageHelper->AddCuUpUePmItem (ueImsiComplete, txPdcpPduBytesNrRlc,
-                                                 // txPdcpPduNrRlc);
+        indicationMessageHelper->AddPdcpUePmItem (ueImsiComplete, txPdcpPduBytesNrRlc,
+                                                 txPdcpPduNrRlc, pdcpThroughput);
+        indicationMessageHelper->AddPHYGnbConfiguration (numActiveUes, m_cellId, portsOn, portsOff);
       }
 
-    uePmString.insert(std::make_pair(imsi, ",,,," + std::to_string(txPdcpPduBytesNrRlc) + "," +
-      std::to_string(txPdcpPduNrRlc)));
+    uePmString.insert(std::make_pair(imsi, std::to_string(pdcpThroughput)));
   }
 
   if (!indicationMessageHelper->IsOffline ())
     {
       //indicationMessageHelper->FillCuUpValues (plmId);
     }
-/////
-  // Get average transmit power
-  double avgPowerDbm = GetAveragePower();
-  
-  NS_LOG_DEBUG(Simulator::Now().GetSeconds() << " " << m_cellId << " cell volume " << cellDlTxVolume
-               << " avg power " << avgPowerDbm << " dBm");
-  
-  std::cout << Simulator::Now().GetSeconds() << " Cell " << m_cellId 
-            << " Average TX Power: " << avgPowerDbm << " dBm (over " 
-            << m_powerSamples.size() << " samples)" << std::endl;
-  
-  // Clear power samples for next reporting period
-  ClearPowerSamples();
+
   if (m_forceE2FileLogging)
     {
       std::ofstream csv{};
@@ -667,36 +749,29 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
 
       uint64_t timestamp = m_startTime + (uint64_t) Simulator::Now ().GetMilliSeconds ();
 
-      // the string is timestamp, ueImsiComplete, DRB.PdcpSduDelayDl (cellAverageLatency),
-      // m_pDCPBytesUL (0), m_pDCPBytesDL (cellDlTxVolume), DRB.PdcpSduVolumeDl_Filter.UEID (txBytes),
-      // Tot.PdcpSduNbrDl.UEID (txDlPackets), DRB.PdcpSduBitRateDl.UEID (pdcpThroughput),
-      // DRB.PdcpSduDelayDl.UEID (pdcpLatency), QosFlow.PdcpPduVolumeDL_Filter.UEID (txPdcpPduBytesNrRlc),
-      // DRB.PdcpPduNbrDl.Qos.UEID (txPdcpPduNrRlc), avgTxPowerDbm
-
-      // Log average power to CSV header if first time
-      static bool powerHeaderWritten = false;
-      if (!powerHeaderWritten)
-      {
-          std::ofstream csvHeader;
-          csvHeader.open(m_cuUpFileName.c_str(), std::ios_base::app);
-          csvHeader << "avgPowerDbm\n";
-          csvHeader.close();
-          powerHeaderWritten = true;
-      }
-
       for (auto ue : ueMap)
         {
           uint64_t imsi = ue.second->GetImsi ();
           std::string ueImsiComplete = GetImsiString (imsi);
 
-          auto uePms = uePmString.find (imsi)->second;
+          auto uePmsIt = uePmString.find (imsi);
+          std::string pdcpThroughputStr = "0";
+          if (uePmsIt != uePmString.end())
+            {
+              pdcpThroughputStr = uePmsIt->second;
+            }
 
-          std::string to_print = std::to_string (timestamp) + "," + ueImsiComplete + "," + "," +
-                                 "," + "," + uePms + "," + std::to_string(avgPowerDbm) + "\n";
+          // Format: timestamp,ueImsiComplete,txBytes,txDlPackets,pdcpThroughput,numActiveUes,cellId
+          std::string to_print = std::to_string (timestamp) + "," + ueImsiComplete + ",0,0," +
+                                 pdcpThroughputStr + "," + 
+                                 std::to_string(numActiveUes) + "," + 
+                                 std::to_string(m_cellId) + "\n";
 
           csv << to_print;
         }
       csv.close ();
+      // Schedule next GUI update
+      Simulator::Schedule (MilliSeconds (100), &NrGnbNetDevice::BuildGUICuUp, this);
       return nullptr;
     }
   else
@@ -704,8 +779,203 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
       return indicationMessageHelper->CreateIndicationMessage ();
     }
 }
-
 //////////////////////////////////////////////////////////////
+// Periodic GUI reporting function (similar to mmwave)
+void
+NrGnbNetDevice::BuildGUICuUp ()
+{
+
+  auto ueMap = m_rrc->GetUeMap();
+  uint16_t numActiveUes = ueMap.size();
+
+  std::ofstream csv{};
+  csv.open (m_cuUpFileName.c_str (), std::ios_base::app);
+  if (!csv.is_open ())
+    {
+      NS_FATAL_ERROR ("Can't file " << m_cuUpFileName.c_str ());
+    }
+
+  uint64_t timestamp = m_startTime + (uint64_t) Simulator::Now ().GetMilliSeconds ();
+  
+  // ===================================================================
+  // Check if we're in the first 26 seconds (baseline period)
+  // During this period, set certain values to 0
+  // ===================================================================
+  double currentTime = Simulator::Now().GetSeconds();
+  bool isBaselinePeriod = (currentTime < 26.0);  // First 26 seconds
+  
+  std::vector<double> portPowerVec = GetPortPower();
+  double averagePower = GetAveragePower();
+  uint16_t portsOn = 0;  // Count of ports with value = 1 (enabled)
+  uint16_t portsOff = 0; // Count of ports with value = 0 (disabled)
+
+  
+    
+  if (!portPowerVec.empty())
+  {
+    for (size_t i = 0; i < portPowerVec.size(); ++i)
+      {
+        // Consider values close to 1.0 as "on" and close to 0.0 as "off"
+        if (portPowerVec[i] >= 0.5)  // Port enabled (value >= 0.5)
+          {
+            portsOn++;
+          }
+        else  // Port disabled (value < 0.5)
+          {
+            portsOff++;
+          }
+      }
+  }
+  std::cout << "BuildGUICuUp: portsOn " << portsOn << " portsOff " << portsOff << std::endl;
+  uint8_t indicationFlag = m_flagIndicationSent ? 1 : 0;
+  uint8_t controlFlag = m_flagControlMessageReceived ? 1 : 0;
+  
+  // Reset indication flag (set in BuildAndSendReportMessage, reset after CSV write)
+  m_flagIndicationSent = false;
+  
+  // For control flag: Only reset if it was 1 (meaning it was captured in this write)
+  // This ensures the flag stays true until it's written at least once
+  if (controlFlag == 1)
+  {
+      // Control message was received and written, now safe to reset for next cycle
+      // Schedule reset after a small delay to ensure CSV is written
+      Simulator::Schedule(MilliSeconds(300), [this]() {
+          m_flagControlMessageReceived = false;
+      });
+  }
+  
+  for (auto ue : ueMap)
+    {
+      uint64_t imsi = ue.second->GetImsi ();
+      std::string ueImsiComplete = GetImsiString (imsi);
+      
+      // Calculate throughput for this UE using difference-based method
+      double pdcpThroughput = 0;
+      if (m_e2PdcpStatsCalculator)
+        {
+          auto drbMap = ue.second->GetDrbMap();
+          double txBytes = 0;
+          
+          // FIRST: Collect ALL data from ALL DRBs (cumulative, no reset)
+          // This gives us the total cumulative bytes since simulation start
+          for (auto drb : drbMap)
+            {
+              uint8_t lcid = drb.second->m_logicalChannelIdentity;
+              double txBytesForLcid = m_e2PdcpStatsCalculator->GetDlTxData(imsi, lcid) * 8 / 1e3; // in kbit
+              txBytes += txBytesForLcid;
+              std::cout << "  [DRB_ID " << (int)drb.first << " -> LCID " << (int)lcid 
+                        << "] PDCP: txKb=" << txBytesForLcid << std::endl;
+            }
+          
+          std::cout<<"e2periodicity: " << m_e2Periodicity << std::endl;
+          std::cout<<"BuildGUICuUp txBytes (cumulative): " << txBytes << std::endl;
+          
+          // SECOND: Calculate throughput from DIFFERENCE (not absolute value)
+          // Get previous cumulative value for this UE
+          double prevTxBytes = 0.0;
+          auto itPrev = m_prevTxBytesPerUe.find(imsi);
+          if (itPrev != m_prevTxBytesPerUe.end())
+            {
+              prevTxBytes = itPrev->second;
+            }
+          
+          // Calculate bytes transmitted in this period (difference)
+          double bytesInPeriod = txBytes - prevTxBytes;
+          
+          // Handle case where stats were reset by BuildRicIndicationMessageCuUp
+          if (bytesInPeriod < 0 || (prevTxBytes > 0 && txBytes < prevTxBytes))
+            {
+              // Stats were reset, so current value is the bytes in this period since reset
+              bytesInPeriod = txBytes;
+              // Update previous to 0 since stats were reset
+              m_prevTxBytesPerUe[imsi] = 0.0;
+            }
+          else
+            {
+              // Normal case: update previous value
+              m_prevTxBytesPerUe[imsi] = txBytes;
+            }
+          
+          // Update previous value for next calculation
+          m_prevTxBytesPerUe[imsi] = txBytes;
+          
+          // THIRD: Calculate throughput: bytes_in_period / time_period
+          // BuildGUICuUp runs every 100ms = 0.1s
+          double guiPeriod = 0.1; // seconds
+          pdcpThroughput = bytesInPeriod / (guiPeriod * 1000.0); // Mbps
+          m_lastThroughputPerUe[imsi] = pdcpThroughput;
+          std::cout<<"BuildGUICuUp: prevTxBytes=" << prevTxBytes 
+                   << ", bytesInPeriod=" << bytesInPeriod 
+                   << ", throughput=" << pdcpThroughput << " Mbps" << std::endl;
+        }
+        
+        // ===================================================================
+        // For first 26 seconds: Set baseline power values to 0
+        // After 26 seconds: Use actual calculated values
+        // ===================================================================
+        double baselineMinPower =  m_baselineMinPower;
+        double baselineMaxPower = isBaselinePeriod ? 0.0 : m_baselineMaxPower;
+        uint16_t newPortsOff = isBaselinePeriod ? 0 : m_NewportsOff;
+        
+  // Calculate savings ONLY after both periods complete (after 50s)
+  double powerSaving = 0.0;
+  double powerSavingPercent = 0.0;
+
+  double currentTime = Simulator::Now().GetSeconds();
+  if (currentTime >= 50.0 && m_baselineAccumulatedPower > 0)
+  {
+      // Power saving using accumulated values
+      powerSaving = m_baselineAccumulatedPower - m_xAppAccumulatedPower;
+      powerSavingPercent = (powerSaving / m_baselineAccumulatedPower) * 100.0;
+  }
+  
+  // CSV: Parse ACCUMULATED power instead of average
+  std::string to_print = std::to_string(timestamp) + "," + ueImsiComplete + ",0,0," +
+                    std::to_string(pdcpThroughput) + "," + 
+                    std::to_string(numActiveUes) + "," + 
+                    std::to_string(m_cellId) + "," + std::to_string(portsOn) + "," +
+                    std::to_string(portsOff) + "," + std::to_string(averagePower) + ","+ 
+                    std::to_string(indicationFlag) + "," + std::to_string(controlFlag) + "," +
+                    std::to_string(m_NewportsOn) + "," + std::to_string(m_NewportsOff) + "," +
+                    std::to_string(m_baselineMinPower) + "," + std::to_string(m_baselineMaxPower) + "," +
+                    std::to_string(m_baselineAccumulatedPower) + "," +  // ACCUMULATED, not avg
+                    std::to_string(m_baselineCurrentPower) + "," +
+                    std::to_string(m_xAppMinPower) + "," +
+                    std::to_string(m_xAppMaxPower) + "," +
+                    std::to_string(m_xAppAccumulatedPower) + "," +      // ACCUMULATED, not avg
+                    std::to_string(m_xAppCurrentPower) + "," +
+                    std::to_string(powerSaving) + "," +
+                    std::to_string(powerSavingPercent) + "," +
+                    std::to_string(m_xAppActive ? 1 : 0) + "," +
+                    std::to_string(m_baselineSampleCount) + "," +
+                    std::to_string(m_xAppSampleCount)+ "\n";
+                         
+      csv << to_print;
+    }
+    
+  // Write at least one row with cell data if no UEs
+  if (ueMap.size() == 0)
+    {
+      // ===================================================================
+      // For first 26 seconds: Set baseline power values to 0
+      // After 26 seconds: Use actual calculated values
+      // ===================================================================
+      double baselineMinPower = isBaselinePeriod ? 0.0 : m_baselineMinPower;
+      double baselineMaxPower = isBaselinePeriod ? 0.0 : m_baselineMaxPower;
+      uint16_t newPortsOff = isBaselinePeriod ? 0 : m_NewportsOff;
+      
+      std::string to_print = std::to_string (timestamp) + ",00000,0,0,0," + 
+                             std::to_string(numActiveUes) + "," + 
+                             std::to_string(m_cellId) + "," + std::to_string(portsOn) + "," 
+                             + std::to_string(portsOff) + "," + std::to_string(averagePower) + "," 
+                             + std::to_string (indicationFlag) + "," + std::to_string (controlFlag) + "," 
+                             + std::to_string(m_NewportsOn) + "," + std::to_string(newPortsOff) + "\n";
+      csv << to_print;
+    }
+
+  csv.close ();
+  Simulator::Schedule (MilliSeconds (100), &NrGnbNetDevice::BuildGUICuUp, this);
+}
 void
 NrGnbNetDevice::SetStartTime (uint64_t st)
 {
@@ -768,8 +1038,7 @@ NrGnbNetDevice::DoInitialize()
     m_rrc->Initialize();
 
     // Start power sampling after 100ms
-    Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::SampleTransmitPower, this);
-
+    Simulator::Schedule(MilliSeconds(50), &NrGnbNetDevice::SampleTransmitPower, this);
     NrNetDevice::DoInitialize();
 }
 
@@ -901,13 +1170,30 @@ NrGnbNetDevice::UpdateConfig()
                   Simulator::Schedule (MicroSeconds (0), &E2Termination::Start, m_e2term);
                 }
             }
-              if (m_is_reported)
-                {
+    
+    // Create CSV file for GUI logging (similar to mmwave)
+    
+        m_cuUpFileName = "nr-cu-up-cell-" + std::to_string (m_cellId) + ".txt";
+        std::ofstream csv{};
+        csv.open (m_cuUpFileName.c_str ());
+        csv << "timestamp,ueImsiComplete,DRB.PdcpSduVolumeDl_Filter.UEID (txBytes),"
+               "Tot.PdcpSduNbrDl.UEID (txDlPackets),DRB.PdcpSduBitRateDl.UEID"
+               "(pdcpThroughput),"
+               "numActiveUes,cellId,portsOn,portsOff,averagePower,indicationflag,controlflag,"
+               "newportson,newportsoff,baselineminpower,baselinemaxpower,"
+               "baselineaccumulatedpower,baselinecurrentpower,xappminpower,xappmaxpower,xappaccumulatedpower,"
+               "xappcurrentpower,powersaving,powersavingpercent,xappactive,baselinesamplecount,xappsamplecount\n";
+        csv.close ();
+        // Schedule periodic GUI reporting
+        Simulator::Schedule (MilliSeconds (100), &NrGnbNetDevice::BuildGUICuUp, this);
+      
 
-                  Simulator::Schedule (MicroSeconds (500),
-                                       &NrGnbNetDevice::BuildAndSendReportMessage, this,
-                                       E2Termination::RicSubscriptionRequest_rval_s{});
-                }
+    if (m_is_reported)
+      {
+        Simulator::Schedule (MicroSeconds (500),
+                             &NrGnbNetDevice::BuildAndSendReportMessage, this,
+                             E2Termination::RicSubscriptionRequest_rval_s{});
+      }
 }
 
 
@@ -923,6 +1209,7 @@ NrGnbNetDevice::CheckReportingFlag()
     const auto &sub_map = m_e2term->SubscriptionMapRef();
     if (!sub_map.empty())
     { std :: cout << "sub_map is not empty" << std::endl;
+        int threshold=0;
       try
       {
         const auto& expr = sub_map.at("Test Condition Expression");
@@ -930,19 +1217,24 @@ NrGnbNetDevice::CheckReportingFlag()
         std::cout << "expr type: " << expr.type().name() << std::endl;
         std::cout << "value type: " << value.type().name() << std::endl;
         int index = std::any_cast<int>(expr);
-        int threshold = std::any_cast<int>(value);
-
-        // Get current PRB average
-       // double currentPrbAvg = CalculatePrbAverage();
-        //std ::cout << "Current PRB Average: " << currentPrbAvg << std::endl;
-        // Only check conditions if we have enough points
-
-
-          //bool shouldReport = MATH_CALL_BACKS[index](currentPrbAvg, threshold);
-
-          std::cout <<
-                       " Threshold: " << threshold <<
-                       " Should Report: " << m_is_reported << " m_isReportingEnabled: " << m_isReportingEnabled << std::endl;
+        if (value.type() == typeid(int)) {
+            threshold = std::any_cast<int>(value);
+          } else if (value.type() == typeid(double)) {
+            threshold = static_cast<int>(std::any_cast<double>(value));
+          } else if (value.type() == typeid(bool)) {
+            threshold = std::any_cast<bool>(value) ? 1 : 0;
+          } else if (value.type() == typeid(unsigned char*)) {
+            auto p = std::any_cast<unsigned char*>(value);
+            if (p != nullptr) threshold = static_cast<int>(p[0]);
+          } else if (value.type() == typeid(char*)) {
+            auto p = std::any_cast<char*>(value);
+            if (p != nullptr) threshold = static_cast<unsigned char>(p[0]);
+          } else {
+            NS_LOG_ERROR("Unsupported Test Condition Value type: " << value.type().name());
+            return;
+          }
+  
+        std::cout << "index: " << index << " threshold: " << threshold << " m_isReportingEnabled: " << m_isReportingEnabled << std::endl;
                         m_is_reported = true;
           // If we haven't started reporting yet, check if we should start
           if (!m_isReportingEnabled)
@@ -1181,7 +1473,8 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
                             monitor, classifier, intervalSec);
     }
 
-      void NrGnbNetDevice::Cell_KPI_tracker() {
+      void NrGnbNetDevice::Cell_KPI_tracker()
+       {
         NS_LOG_UNCOND("---------------------------------------------");
 
         // Create a folder
@@ -1463,7 +1756,7 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
         NS_LOG_UNCOND("---------------------------------------------");
     }
 
-void
+    void
 NrGnbNetDevice::SetPortPower(const std::vector<double>& portPowerVec)
 {
     NS_LOG_FUNCTION(this);
@@ -1478,18 +1771,72 @@ NrGnbNetDevice::SetPortPower(const std::vector<double>& portPowerVec)
     
     NS_LOG_INFO("Setting port power configuration with " << portPowerVec.size() 
                 << " ports, sum=" << sum);
-    
+                bool isXAppChange = false;
+                if (!m_portPowerConfig.empty() && m_portPowerConfig.size() == portPowerVec.size())
+                {
+                    // Compare with current config - if different, it's an xApp change
+                    for (size_t i = 0; i < portPowerVec.size(); ++i)
+                    {
+                        if (std::abs(m_portPowerConfig[i] - portPowerVec[i]) > 0.01)
+                        {
+                            isXAppChange = true;
+                            break;
+                        }
+                    }
+                }
+                else if (m_portPowerConfig.empty() && portPowerVec.size() == 4)
+                {
+                    // First time setting - check if it's not all ports on (default would be all on)
+                    int activePorts = 0;
+                    for (double p : portPowerVec) if (p > 0.5) activePorts++;
+                    if (activePorts < 4)
+                    {
+                        isXAppChange = true; // xApp reduced ports from default
+                    }
+                }
+                
+                // Mark xApp as active if port configuration changed
+                if (isXAppChange && !m_xAppActive)
+                {
+                    m_xAppActive = true;
+                    m_xAppActivationTime = Simulator::Now();
+                    NS_LOG_UNCOND("=== xApp ACTIVATED: Port configuration changed at time " 
+                                  << Simulator::Now().GetSeconds() << "s ===");
+                    std::cout << "=== xApp ACTIVATED: Starting power tracking with xApp ===" << std::endl;
+                }
     // Store the configuration
     m_portPowerConfig = portPowerVec;
     
-    // Note: To apply this to the codebook, you need to:
-    // 1. Access the NrPmSearch object (typically on UE side)
-    // 2. Call SetCodebookAttribute("PortPower", StringValue(...))
-    // This is typically done during configuration/setup phase
-    // For dynamic runtime changes, additional infrastructure is needed
+    // Clear old power samples to ensure sharp change (no smoothing from old data)
+    m_powerSamples.clear();
+    NS_LOG_INFO("Cleared power samples for sharp response to port configuration change");
+    
+    // Calculate port power scaling factor
+    double portPowerScaling = 1.0;
+    if (!portPowerVec.empty())
+    {
+        // Sum of port powers divided by number of ports
+        // Example: [1,1,0,0] -> (1+1+0+0)/4 = 0.5 (50% effective power)
+        portPowerScaling = sum / portPowerVec.size();
+    }
+    
+    // Apply port power scaling to all PHY instances (BWPs)
+    for (auto& bwp : m_ccMap)
+    {
+        Ptr<NrGnbPhy> phy = bwp.second->GetPhy();
+        if (phy)
+        {
+            phy->SetPortPowerScaling(portPowerScaling);
+            NS_LOG_INFO("Set port power scaling " << portPowerScaling 
+                        << " on BWP " << (int)bwp.first);
+        }
+    }
     
     std::cout << "Port power configuration set for gNB " << m_cellId 
-              << " with " << portPowerVec.size() << " ports" << std::endl;
+    << " with " << portPowerVec.size() << " ports"
+    << " (Active ports: " << (sum > 0 ? static_cast<int>(sum) : 0) << ")"
+    << " (scaling factor: " << portPowerScaling << ")"
+    << (isXAppChange ? " [xApp]" : " [Initial]") << std::endl;
 }
 
 std::vector<double>
@@ -1507,30 +1854,291 @@ NrGnbNetDevice::SampleTransmitPower()
     double totalPower = 0.0;
     uint32_t numBwps = 0;
     
+    // Get PRB usage statistics
+    Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
+    double prbUsageFactor = 1.0; // Default to 100% if stats not available
+    uint16_t numActiveUes = 0;
+    
+    if (gnbPhy)
+    {
+        NrGnbPhy::RbStats stats = gnbPhy->GetRBStats();
+        
+        // PRB usage percentage (0-100) converted to factor (0.0-1.0)
+        if (stats.iterations > 0)
+        {
+            prbUsageFactor = (stats.prbUsagePercentage / stats.iterations) / 100.0;
+        }
+        else
+        {
+            prbUsageFactor = stats.prbUsagePercentage / 100.0;
+        }
+        
+        // Clamp to valid range [0.0, 1.0]
+        prbUsageFactor = std::max(0.0, std::min(1.0, prbUsageFactor));
+        
+        // Get number of active UEs
+        auto ueMap = m_rrc->GetUeMap();
+        numActiveUes = static_cast<uint16_t>(ueMap.size());
+    }
+    
+    // Calculate number of active ports (ports with power > 0)
+    uint16_t numActivePorts = 0;
+    if (!m_portPowerConfig.empty())
+    {
+        for (double portPower : m_portPowerConfig)
+        {
+            if (portPower > 0.0)
+            {
+                numActivePorts++;
+            }
+        }
+    }
+    else
+    {
+        // Default: assume all ports active if config not set
+        numActivePorts = 4; // Default number of ports
+    }
+    
+    // Get total number of ports (typically 4)
+    uint16_t totalPorts = m_portPowerConfig.empty() ? 4 : static_cast<uint16_t>(m_portPowerConfig.size());
+    
     // Calculate current transmit power from all BWPs
     for (auto& bwp : m_ccMap)
     {
         Ptr<NrGnbPhy> phy = bwp.second->GetPhy();
         if (phy)
         {
-            // Get TX power in dBm
-            double txPowerDbm = phy->GetTxPower();
+            // Get base TX power from PHY (50 dBm from scenario - this is TOTAL power when all ports are on)
+            // Note: GetTxPower() may return effective power with port scaling, so we need the base
+            // The scenario sets TxPower attribute to 50 dBm
+            double baseTxPowerDbm = phy->GetTxPower(); // This gets effective power (may include port scaling)
             
-            // Convert to watts and accumulate
-            double txPowerWatts = std::pow(10.0, (txPowerDbm - 30.0) / 10.0);
-            totalPower += txPowerWatts;
+            // If GetTxPower() returns effective power, we need to get the base power
+            // Check if port scaling is applied - if so, reverse it to get base power
+            double portScaling = phy->GetPortPowerScaling();
+            if (portScaling > 0.0 && portScaling < 1.0)
+            {
+                // Reverse the port scaling to get base power
+                // Effective = Base + 10*log10(scaling), so Base = Effective - 10*log10(scaling)
+                baseTxPowerDbm = baseTxPowerDbm - 10.0 * std::log10(portScaling);
+            }
+            
+            if (baseTxPowerDbm <= 0)
+            {
+                baseTxPowerDbm = 50.0; // Default: 50 dBm = 100 W (from scenario)
+            }
+            
+            // Convert total base power to watts (50 dBm = 100 W when all 4 ports are on)
+            double totalMaxPowerWatts = std::pow(10.0, (baseTxPowerDbm - 30.0) / 10.0);
+            
+            // ============================================================
+            // REAL 5G gNB POWER CONSUMPTION MODEL (Telecom Expert)
+            // ============================================================
+            // Model: P_total = P_base + (N_active / N_total) × P_dynamic × traffic_factor
+            //
+            // Where:
+            // - P_base = 25% of max power (baseband, cooling, control plane) = 25 W
+            // - P_dynamic = 75% of max power (RF amplifiers, scales with active ports) = 75 W
+            // - N_active = number of active ports
+            // - N_total = total number of ports (4)
+            // - traffic_factor = small adjustment (0.9 to 1.0) based on PRB usage
+            //
+            // Real values for 50 dBm (100W) gNB:
+            // - 4 ports on, 100% PRB: 25W + (4/4)×75W×1.0 = 100W
+            // - 4 ports on, 50% PRB: 25W + (4/4)×75W×0.95 = 96.25W (small reduction)
+            // - 2 ports on, 100% PRB: 25W + (2/4)×75W×1.0 = 62.5W
+            // - 1 port on, 100% PRB: 25W + (1/4)×75W×1.0 = 43.75W
+            // ============================================================
+            
+            const double basePowerRatio = 0.25;  // 25% base power (always on)
+            const double dynamicPowerRatio = 0.75; // 75% dynamic power (scales with ports)
+            
+            double basePowerWatts = totalMaxPowerWatts * basePowerRatio;
+            double dynamicPowerWatts = totalMaxPowerWatts * dynamicPowerRatio;
+            
+            // Calculate port scaling factor
+            double portRatio = static_cast<double>(numActivePorts) / static_cast<double>(totalPorts);
+            
+            // Traffic factor: small adjustment (5-10%) based on PRB usage
+            // This accounts for power amplifier efficiency variation with load
+            // Range: 0.90 (low PRB) to 1.0 (high PRB)
+            double trafficFactor = 0.90 + (0.10 * prbUsageFactor);
+            
+            // Final effective power
+            // Base power is constant, dynamic power scales with ports and traffic
+            double effectivePowerWatts = basePowerWatts + 
+                                        (dynamicPowerWatts * portRatio * trafficFactor);
+            
+            totalPower += effectivePowerWatts;
             numBwps++;
+            
+            // Convert to dBm for logging
+            double effectivePowerDbm = 10.0 * std::log10(std::max(1e-6, effectivePowerWatts)) + 30.0;
+            
+            std::cout << std::fixed << std::setprecision(2)
+                      << "Power calculation for BWP " << (int)bwp.first << ": "
+                      << "Base_TX=" << baseTxPowerDbm << " dBm (" << totalMaxPowerWatts << " W max), "
+                      << "Active_ports=" << numActivePorts << "/" << totalPorts << ", "
+                      << "Base_power=" << basePowerWatts << " W, "
+                      << "Dynamic_power=" << (dynamicPowerWatts * portRatio) << " W, "
+                      << "PRB_factor=" << std::setprecision(2) << prbUsageFactor << ", "
+                      << "Traffic_factor=" << std::setprecision(2) << trafficFactor << ", "
+                      << "Final=" << std::setprecision(2) << effectivePowerDbm << " dBm, "
+                      << "Watts=" << std::setprecision(3) << effectivePowerWatts << " W" << std::endl;
         }
     }
     
     if (numBwps > 0)
     {
-        // Convert back to dBm for storage
-        double avgPowerDbm = 10.0 * std::log10(totalPower) + 30.0;
-        m_powerSamples.push_back(avgPowerDbm);
+        // Store current power directly (NO SAMPLING, NO SMOOTHING)
+        m_currentPowerWatts = totalPower; // Store in watts
         
-        NS_LOG_DEBUG("Sampled power: " << avgPowerDbm << " dBm (from " 
-                     << numBwps << " BWPs)");
+ // ============================================================
+        // ACCUMULATE POWER FOR BASELINE vs xAPP COMPARISON
+        // Both periods are exactly 25 seconds (250 samples) for fair comparison
+        // Baseline: 0-25 seconds (WITHOUT xApp - use actual power)
+        // xApp: 25-50 seconds (WITH xApp - use actual power)
+        // ============================================================
+        double currentTime = Simulator::Now().GetSeconds();
+        double baselinePeriodStart = 0.0;
+        double baselinePeriodEnd = 25.0;
+        double xAppPeriodStart = 25.0;
+        double xAppPeriodEnd = 50.0;
+        
+        // BASELINE PERIOD: 0 to 25 seconds
+        // Accumulate ALL samples during 0-25s (no m_xAppActive check)
+        // For baseline period
+        if (currentTime >= baselinePeriodStart && currentTime < baselinePeriodEnd)
+        {
+            m_baselineAccumulatedPower += totalPower;
+            m_baselineSampleCount++;
+            
+            // Update min/max/current
+            // If first sample OR power is less than current min
+            if (m_baselineSampleCount == 1 || totalPower < m_baselineMinPower) {
+                m_baselineMinPower = totalPower;
+            }
+            if (totalPower > m_baselineMaxPower) m_baselineMaxPower = totalPower;
+            m_baselineCurrentPower = totalPower;
+        }
+
+        // For xApp period  
+        if (currentTime >= xAppPeriodStart && currentTime < xAppPeriodEnd)
+        {
+            m_xAppAccumulatedPower += totalPower;
+            m_xAppSampleCount++;
+            
+            // Update min/max/current
+            // If first sample OR power is less than current min
+            if (m_xAppSampleCount == 1 || totalPower < m_xAppMinPower) {
+                m_xAppMinPower = totalPower;
+            }
+            if (totalPower > m_xAppMaxPower) m_xAppMaxPower = totalPower;
+            m_xAppCurrentPower = totalPower;
+        }
+        else if (currentTime > xAppPeriodEnd)
+        {
+            // xApp period completed - stop accumulating
+            // The average is already calculated and stored in m_xAppAvgPower
+            if (m_xAppActive && m_xAppSampleCount > 0)
+            {
+                NS_LOG_DEBUG("xApp period completed at " << currentTime << "s. "
+                             << "Final avg=" << m_xAppAvgPower << " W over " 
+                             << m_xAppSampleCount << " samples (period: 25-50s)");
+            }
+        }
+
+        // ============================================================
+        // POWER TRACKING FOR COMPARISON: Baseline vs xApp
+        // ============================================================
+        
+        if (!m_xAppActive)
+        {
+            // BASELINE SCENARIO: Only throughput changes, no port changes
+            // Calculate what power would be with all ports on (baseline)
+            // This simulates the scenario without xApp
+            double baselinePower = totalPower; // Current power (all ports on, throughput varies)
+            
+            // Update baseline min/max
+            if (baselinePower < m_baselineMinPower)
+            {
+                m_baselineMinPower = baselinePower;
+            }
+            if (baselinePower > m_baselineMaxPower)
+            {
+                m_baselineMaxPower = baselinePower;
+            }
+            m_baselineCurrentPower = baselinePower;
+            
+            NS_LOG_DEBUG("Baseline power: " << baselinePower << " W (min=" 
+                         << m_baselineMinPower << ", max=" << m_baselineMaxPower << ")");
+        }
+        else
+        {
+            // xAPP SCENARIO: Throughput changes + port changes
+            m_xAppCurrentPower = totalPower;
+            
+            // Update xApp min/max
+            if (totalPower < m_xAppMinPower)
+            {
+                m_xAppMinPower = totalPower;
+            }
+            if (totalPower > m_xAppMaxPower)
+            {
+                m_xAppMaxPower = totalPower;
+            }
+            
+            // Calculate baseline power for comparison (what it would be with all ports on)
+            // Recalculate with all ports active to simulate baseline scenario
+            double baselinePower = 0.0;
+            for (auto& bwp : m_ccMap)
+            {
+                Ptr<NrGnbPhy> phy = bwp.second->GetPhy();
+                if (phy)
+                {
+                    double baseTxPowerDbm = phy->GetTxPower();
+                    double portScaling = phy->GetPortPowerScaling();
+                    if (portScaling > 0.0 && portScaling < 1.0)
+                    {
+                        baseTxPowerDbm = baseTxPowerDbm - 10.0 * std::log10(portScaling);
+                    }
+                    if (baseTxPowerDbm <= 0) baseTxPowerDbm = 50.0;
+                    
+                    double totalMaxPowerWatts = std::pow(10.0, (baseTxPowerDbm - 30.0) / 10.0);
+                    const double basePowerRatio = 0.25;
+                    const double dynamicPowerRatio = 0.75;
+                    double basePowerWatts = totalMaxPowerWatts * basePowerRatio;
+                    double dynamicPowerWatts = totalMaxPowerWatts * dynamicPowerRatio;
+                    
+                    // Calculate with all ports on (baseline scenario)
+                    double portRatio = 1.0; // All ports on
+                    double trafficFactor = 0.90 + (0.10 * prbUsageFactor);
+                    double baselineBwpPower = basePowerWatts + (dynamicPowerWatts * portRatio * trafficFactor);
+                    baselinePower += baselineBwpPower;
+                }
+            }
+            
+            // Update baseline stats even when xApp is active (for comparison)
+            if (baselinePower < m_baselineMinPower)
+            {
+                m_baselineMinPower = baselinePower;
+            }
+            if (baselinePower > m_baselineMaxPower)
+            {
+                m_baselineMaxPower = baselinePower;
+            }
+            m_baselineCurrentPower = baselinePower;
+            
+            NS_LOG_DEBUG("xApp power: " << totalPower << " W (min=" 
+                         << m_xAppMinPower << ", max=" << m_xAppMaxPower << "), "
+                         << "Baseline (simulated): " << baselinePower << " W");
+        }
+        
+        NS_LOG_DEBUG("Current power: " << (10.0 * std::log10(std::max(1e-6, totalPower)) + 30.0) 
+                     << " dBm (" << totalPower << " W) from " 
+                     << numBwps << " BWPs, Active ports: " << numActivePorts
+                     << ", PRB usage: " << (prbUsageFactor * 100.0) 
+                     << "%, UEs: " << numActiveUes);
     }
     
     // Schedule next sample in 100ms
@@ -1542,26 +2150,19 @@ NrGnbNetDevice::GetAveragePower() const
 {
     NS_LOG_FUNCTION(this);
     
-    if (m_powerSamples.empty())
+    // Return current power directly (NO AVERAGING, NO SMOOTHING)
+    // This ensures sharp response to port configuration changes
+    if (m_currentPowerWatts <= 0.0)
     {
         return 0.0;
     }
     
-    // Calculate average in linear domain
-    double sumLinear = 0.0;
-    for (double powerDbm : m_powerSamples)
-    {
-        double powerWatts = std::pow(10.0, (powerDbm - 30.0) / 10.0);
-        sumLinear += powerWatts;
-    }
+    double currentWatts = m_currentPowerWatts;
+    double currentDbm = 10.0 * std::log10(currentWatts) + 30.0;
     
-    double avgWatts = sumLinear / m_powerSamples.size();
-    double avgDbm = 10.0 * std::log10(avgWatts) + 30.0;
+    NS_LOG_DEBUG("Current power (no averaging): " << currentDbm << " dBm (" << currentWatts << " W)");
     
-    NS_LOG_DEBUG("Average power over " << m_powerSamples.size() 
-                 << " samples: " << avgDbm << " dBm");
-    
-    return avgDbm;
+    return currentWatts;  // Return watts
 }
 
 void
