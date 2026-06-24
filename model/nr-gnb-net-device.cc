@@ -34,6 +34,7 @@
 #include <vector>
 #include "encode_e2apv1.hpp"
 #include "ns3/Lena-indication-message-helper.h"
+#include "ns3/nr-phy-kpi-collector.h"
 #include "ns3/kpm-function-description.h"
 #include "ns3/ric-control-function-description.h"
 #include "ns3/ccc-function-description.h"
@@ -438,6 +439,12 @@ void
 }
 
 void
+NrGnbNetDevice::SetPhyKpiCollector(Ptr<NrPhyKpiCollector> collector)
+{
+    m_phyKpiCollector = collector;
+}
+
+void
 NrGnbNetDevice::SetE2Termination(Ptr<E2Termination> e2term)
 {
     m_e2term = e2term;
@@ -540,12 +547,15 @@ NrGnbNetDevice::BuildAndSendReportMessage (E2Termination::RicSubscriptionRequest
 {
   std::cout << "[DEBUG] BuildAndSendReportMessage called" << std::endl;
   m_flagIndicationSent = true;
-  std::string plmId = "111";
+  // BCD-encode PLMN: MCC=001, MNC=01 → bytes {0x00, 0xF1, 0x10}
+  uint8_t plmnBCD[3];
+  encoding::encode_plmn_bcd (plmnBCD, "001", "01");
+  std::string plmId (reinterpret_cast<char*>(plmnBCD), 3);
   std::string gnbId = std::to_string (m_cellId);
 
   // TODO here we can get something from RRC and onward
-  NS_LOG_DEBUG ("NrGnbNetDevice " << m_cellId << " BuildAndSendMessage at time "
-                                      << Simulator::Now ().GetSeconds ());
+  std::cout << "plmnid " << plmId << " gnbId " << gnbId << " nrCellId " << m_cellId << " BuildAndSendMessage at time "
+                                      << Simulator::Now ().GetSeconds () << std::endl;
   if (m_sendCuUp)
     {
       // Create CU-UP
@@ -737,6 +747,24 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
       //indicationMessageHelper->FillCuUpValues (plmId);
     }
 
+  // --- PHY KPI collection (modular, opt-in) ---
+  if (m_phyKpiCollector)
+    {
+      NrKpiSnapshot phySnapshot = m_phyKpiCollector->CollectAll (this);
+      NrKpiCollector::PrintSnapshot (phySnapshot, std::cout);
+
+      if (!indicationMessageHelper->IsOffline ())
+        {
+          for (const auto& s : phySnapshot.samples)
+            {
+              double v = (s.type == NrKpiValueType::DOUBLE)   ? s.doubleValue
+                         : (s.type == NrKpiValueType::UINT64) ? static_cast<double>(s.uint64Value)
+                                                              : (s.boolValue ? 1.0 : 0.0);
+              indicationMessageHelper->AddPhyKpiItem (s.kpiName, v, s.imsi, s.cellId);
+            }
+        }
+    }
+
   if (m_forceE2FileLogging)
     {
       std::ofstream csv{};
@@ -783,6 +811,13 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
 void
 NrGnbNetDevice::BuildGUICuUp ()
 {
+  // --- Standalone PHY KPI log output (works without FlexRIC) ---
+  // This fires every 100 ms regardless of whether an E2 subscription exists.
+  if (m_phyKpiCollector)
+    {
+      NrKpiSnapshot phySnapshot = m_phyKpiCollector->CollectAll (this);
+      NrKpiCollector::PrintSnapshot (phySnapshot, std::cout);
+    }
 
   auto ueMap = m_rrc->GetUeMap();
   uint16_t numActiveUes = ueMap.size();

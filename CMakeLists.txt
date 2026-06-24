@@ -19,6 +19,9 @@ set(source_files
     ${eigen_sources}
     helper/beamforming-helper-base.cc
     helper/cc-bwp-helper.cc
+    helper/nr-kpi-registry.cc
+    helper/nr-kpi-sample.cc
+    helper/nr-phy-kpi-collector.cc
     helper/file-scenario-helper.cc
     helper/grid-scenario-helper.cc
     helper/hexagonal-grid-scenario-helper.cc
@@ -189,6 +192,10 @@ set(source_files
 set(header_files
     helper/beamforming-helper-base.h
     helper/cc-bwp-helper.h
+    helper/nr-kpi-registry.h
+    helper/nr-kpi-reporting-config.h
+    helper/nr-kpi-sample.h
+    helper/nr-phy-kpi-collector.h
     helper/file-scenario-helper.h
     helper/grid-scenario-helper.h
     helper/hexagonal-grid-scenario-helper.h

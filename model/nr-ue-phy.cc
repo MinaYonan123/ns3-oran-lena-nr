@@ -1262,6 +1262,7 @@ NrUePhy::CreateDlCqiFeedbackMessage(const SpectrumValue& sinr)
         m_ueKpiAcc.riSum += 1;
         m_ueKpiAcc.count++;
 
+        m_cqiFeedbackTrace(m_rnti, dlcqi.m_wbCqi, dlcqi.m_mcs, static_cast<uint8_t>(1));
 
         return msg;
     }
@@ -1925,6 +1926,8 @@ NrUePhy::GenerateDlCqiReportMimo(const std::vector<MimoSignalChunk>& mimoChunks)
     m_ueKpiAcc.mcsSum += dlcqi.m_mcs;
     m_ueKpiAcc.riSum += dlcqi.m_ri;
     m_ueKpiAcc.count++;
+
+    m_cqiFeedbackTrace(m_rnti, dlcqi.m_wbCqi, dlcqi.m_mcs, static_cast<uint8_t>(dlcqi.m_ri));
 
     auto msg = Create<NrDlCqiMessage>();
     msg->SetSourceBwp(GetBwpId());
