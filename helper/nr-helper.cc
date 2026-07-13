@@ -7,7 +7,7 @@
 #include "nr-bearer-stats-calculator.h"
 #include "nr-epc-helper.h"
 #include "nr-kpi-registry.h"
-#include "nr-phy-kpi-collector.h"
+#include "nr-kpi-collector.h"
 #include "nr-mac-rx-trace.h"
 #include "nr-phy-rx-trace.h"
 

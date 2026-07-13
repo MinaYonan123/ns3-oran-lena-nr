@@ -34,7 +34,7 @@
 #include <vector>
 #include "encode_e2apv1.hpp"
 #include "ns3/Lena-indication-message-helper.h"
-#include "ns3/nr-phy-kpi-collector.h"
+#include "ns3/nr-kpi-collector.h"
 #include "ns3/kpm-function-description.h"
 #include "ns3/ric-control-function-description.h"
 #include "ns3/ccc-function-description.h"

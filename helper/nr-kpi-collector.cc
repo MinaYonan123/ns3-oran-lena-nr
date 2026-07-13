@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-#include "nr-phy-kpi-collector.h"
+#include "nr-kpi-collector.h"
 
 #include "nr-bearer-stats-calculator.h"
 #include "nr-helper.h"

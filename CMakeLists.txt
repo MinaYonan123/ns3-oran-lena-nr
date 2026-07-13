@@ -21,7 +21,7 @@ set(source_files
     helper/cc-bwp-helper.cc
     helper/nr-kpi-registry.cc
     helper/nr-kpi-sample.cc
-    helper/nr-phy-kpi-collector.cc
+    helper/nr-kpi-collector.cc
     helper/file-scenario-helper.cc
     helper/grid-scenario-helper.cc
     helper/hexagonal-grid-scenario-helper.cc
@@ -195,7 +195,7 @@ set(header_files
     helper/nr-kpi-registry.h
     helper/nr-kpi-reporting-config.h
     helper/nr-kpi-sample.h
-    helper/nr-phy-kpi-collector.h
+    helper/nr-kpi-collector.h
     helper/file-scenario-helper.h
     helper/grid-scenario-helper.h
     helper/hexagonal-grid-scenario-helper.h
