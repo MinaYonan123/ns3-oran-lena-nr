@@ -87,6 +87,7 @@ class NrKpiCollector : public Object
     void RecordGlobalDouble(const std::string& kpiName, double value);
     void IncrementUeCounter(const std::string& kpiName, uint64_t imsi, uint16_t rnti);
     void IncrementCellCounter(const std::string& kpiName, uint16_t cellId);
+    void SetReportingPeriod(double periodSeconds) { m_reportingPeriodSeconds = periodSeconds; }
 
   private:
     std::set<std::string> m_enabledKpis;
@@ -120,9 +121,6 @@ class NrKpiCollector : public Object
     mutable std::map<uint64_t, uint64_t> m_prevPdcpDlRx;
     mutable std::map<uint64_t, uint64_t> m_prevPdcpDlPkts;
     mutable std::map<uint64_t, uint64_t> m_prevPdcpDlRxPkts;
-
-public:
-    void SetReportingPeriod(double periodSeconds) { m_reportingPeriodSeconds = periodSeconds; }
 };
 
 // Backward-compat alias so existing code compiles without changes

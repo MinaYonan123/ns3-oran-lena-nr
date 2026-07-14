@@ -57,8 +57,6 @@ struct NrKpiSnapshot
     std::vector<NrKpiSample> samples;
 };
 
-std::string NrKpiLayerToString(NrKpiLayer layer);
-
 } // namespace ns3
 
 #endif /* NR_KPI_SAMPLE_H */

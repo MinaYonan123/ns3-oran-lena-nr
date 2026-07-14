@@ -20,7 +20,6 @@ set(source_files
     helper/beamforming-helper-base.cc
     helper/cc-bwp-helper.cc
     helper/nr-kpi-registry.cc
-    helper/nr-kpi-sample.cc
     helper/nr-kpi-collector.cc
     helper/file-scenario-helper.cc
     helper/grid-scenario-helper.cc

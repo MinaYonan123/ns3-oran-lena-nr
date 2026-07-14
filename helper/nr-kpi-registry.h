@@ -33,11 +33,6 @@ class NrKpiRegistry
 {
   public:
     static const NrKpiRegistryEntry* Find(const std::string& kpiName);
-    static std::vector<const NrKpiRegistryEntry*> GetByLayer(NrKpiLayer layer);
-    static std::vector<std::string> GetAllImplementablePhyKpiNames();
-    static std::vector<const NrKpiRegistryEntry*> ValidatePhySelection(
-        const std::vector<std::string>& requested,
-        bool layerEnabled);
     static std::vector<const NrKpiRegistryEntry*> ValidateSelection(
         const std::vector<std::string>& requested,
         bool layerEnabled);

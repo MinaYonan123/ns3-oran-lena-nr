@@ -717,21 +717,10 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
     cellDlTxVolume += txBytes;
     cellDlRxVolume += rxBytes;
     
-    std::cout<<"BuildRicIndicationMessageCuUp e2periodicity: " << m_e2Periodicity << std::endl;
-    std::cout<<"BuildRicIndicationMessageCuUp: Using throughput from BuildGUICuUp = " 
-             << pdcpThroughput << " Mbps" << std::endl;
-
-    std::cout << Simulator::Now().GetSeconds() << " " << m_cellId << " cell, connected UE with IMSI " << imsi
-      << " ueImsiString " << ueImsiComplete
-      << " txDlPackets " << txDlPackets
-      << " txDlPacketsNr " << txPdcpPduNrRlc
-      << " txBytes " << txBytes
-      << " rxBytes " << rxBytes
-      << " txDlBytesNr " << txPdcpPduBytesNrRlc
-      << " pdcpLatency " << pdcpLatency
-      << " pdcpThroughput " << pdcpThroughput << std::endl;
-
-    // PDCP stats are reset inside the DRB loop above (per LCID)
+    NS_LOG_DEBUG("CuUp cell=" << m_cellId << " imsi=" << imsi
+                 << " txPkts=" << txDlPackets << " txKb=" << txBytes
+                 << " rxKb=" << rxBytes << " latency=" << pdcpLatency
+                 << " thp=" << pdcpThroughput << " Mbps");
     if (!indicationMessageHelper->IsOffline ())
       {
         indicationMessageHelper->AddPdcpUePmItem (ueImsiComplete, txPdcpPduBytesNrRlc,
@@ -900,9 +889,6 @@ NrGnbNetDevice::BuildGUICuUp ()
               std::cout << "  [DRB_ID " << (int)drb.first << " -> LCID " << (int)lcid 
                         << "] PDCP: txKb=" << txBytesForLcid << std::endl;
             }
-          
-          std::cout<<"e2periodicity: " << m_e2Periodicity << std::endl;
-          std::cout<<"BuildGUICuUp txBytes (cumulative): " << txBytes << std::endl;
           
           // SECOND: Calculate throughput from DIFFERENCE (not absolute value)
           // Get previous cumulative value for this UE
@@ -1952,9 +1938,7 @@ NrGnbNetDevice::SampleTransmitPower()
             double portScaling = phy->GetPortPowerScaling();
             if (portScaling > 0.0 && portScaling < 1.0)
             {
-                // Reverse the port scaling to get base power
-                // Effective = Base + 10*log10(scaling), so Base = Effective - 10*log10(scaling)
-                baseTxPowerDbm = baseTxPowerDbm - 10.0 * std::log10(portScaling);
+                baseTxPowerDbm -= 10.0 * std::log10(portScaling);
             }
             
             if (baseTxPowerDbm <= 0)
