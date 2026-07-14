@@ -93,6 +93,11 @@ class NrGnbPhy : public NrPhy
     friend class NrMemberPhySapProvider;
 
   public:
+    // Power model constants shared by all power-calculation sites.
+    static constexpr double kBasePowerRatio    = 0.25; ///< Fraction of max TX power always consumed
+    static constexpr double kDynamicPowerRatio = 0.75; ///< Fraction that scales with ports & load
+    static constexpr double kTrafficFactorMin  = 0.90; ///< Minimum traffic factor (at 0 % PRB)
+
     /**
      * \brief Get Type id
      * \return the type id of the NrGnbPhy
@@ -489,7 +494,8 @@ class NrGnbPhy : public NrPhy
 
   private:
     private:
-    double m_portPowerScaling{1.0}; //!< Port power scaling factor
+    double m_portPowerScaling{1.0};        //!< Port power scaling factor (activePorts/totalPorts)
+    mutable double m_lastPrbUtil{0.0};     //!< Last valid PRB utilisation (cache for when m_RbStats resets)
       double energyAccumulated = 0.0; // in Joules
 
     /**

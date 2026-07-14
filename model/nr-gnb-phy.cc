@@ -2051,72 +2051,34 @@ NrGnbPhy::GetTotalEnergyConsumption() const {
 double 
 NrGnbPhy::GetCurrentPowerConsumption() const
 {
-    // Base power consumption components for gNB
-    double basePowerWatt = 150.0;        // Base station idle power (~150W)
-    double coolingPowerWatt = 50.0;      // Cooling system (~50W)
-    double processingPowerWatt = 20.0;   // Digital signal processing (~20W)
-    
-    // RF transmission power (convert from dBm to Watts)
-    double txPowerDbm = GetTxPower();
-    double rfPowerWatt = std::pow(10.0, (txPowerDbm - 30.0) / 10.0);
-    
-    // Activity-based power scaling
-    double activityFactor = CalculateActivityFactor();
-    double dynamicPowerWatt = processingPowerWatt * activityFactor;
-    
-    // Power amplifier efficiency (typically 40-50% for gNB)
-    double paEfficiency = 0.45;
-    double amplifierPowerWatt = rfPowerWatt / paEfficiency;
-    
-    // Total power consumption varies with activity
-    double totalPower = basePowerWatt + coolingPowerWatt + dynamicPowerWatt + amplifierPowerWatt;
-    
-    return totalPower;
+    // Proportional model consistent with NrGnbNetDevice::SampleTransmitPower.
+    // P = P_max * (kBasePowerRatio + kDynamicPowerRatio * portScaling * trafficFactor)
+    // m_txPower is in dBm; convert to Watts for P_max.
+    double totalMaxPowerWatts = std::pow(10.0, (m_txPower - 30.0) / 10.0);
+    double prbUtil      = GetPrbUtilization();
+    double trafficFactor = kTrafficFactorMin + (1.0 - kTrafficFactorMin) * prbUtil;
+    return totalMaxPowerWatts
+           * (kBasePowerRatio + kDynamicPowerRatio * m_portPowerScaling * trafficFactor);
 }
 
 double
 NrGnbPhy::CalculateActivityFactor() const
 {
-    // Calculate activity based on actual resource usage
-    double prbUtilization = GetPrbUtilization();  // 0.0 to 1.0
-    double schedulingActivity = GetSchedulingActivity(); // 0.0 to 1.0
-    
-    // Combine different activity metrics
-    double baseActivity = 0.3;  // Minimum activity level (30%)
-    double variableActivity = 0.7 * std::max(prbUtilization, schedulingActivity);
-    
-    return std::min(1.0, baseActivity + variableActivity);
+    return GetPrbUtilization();
 }
 
 double
 NrGnbPhy::GetPrbUtilization() const
 {
-    // Calculate PRB utilization based on current allocations
-    uint32_t totalPrbs = GetRbNum();
-    uint32_t usedPrbs = 0;
-    
-    // Check if spectrum phy and HARQ module are available
-    auto spectrumPhy = GetSpectrumPhy();
-    if (!spectrumPhy || !spectrumPhy->GetHarqPhyModule())
+    // Use the slot-level RB statistics collected by the scheduler.
+    // If statistics have been reset (iterations==0), fall back to the last
+    // valid value so that GetCurrentPowerConsumption() never sees a spurious 0.
+    if (m_RbStats.iterations > 0)
     {
-        return 0.0;
+        double util = (m_RbStats.prbUsagePercentage / m_RbStats.iterations) / 100.0;
+        m_lastPrbUtil = std::min(1.0, util);
     }
-    
-    // For gNB, we can estimate PRB utilization based on current scheduling activity
-    // This is a simplified approach - in reality this would require access to scheduler state
-    
-    // Estimate based on number of connected UEs and their activity
-    uint32_t connectedUes = m_ueAttached.size();
-    if (connectedUes == 0)
-    {
-        return 0.0;
-    }
-    
-    // Assume average PRB usage per UE (this could be made more sophisticated)
-    double avgPrbsPerUe = 10.0; // Typical allocation
-    double estimatedUsedPrbs = connectedUes * avgPrbsPerUe;
-    
-    return totalPrbs > 0 ? std::min(1.0, estimatedUsedPrbs / totalPrbs) : 0.0;
+    return m_lastPrbUtil;
 }
 
 double

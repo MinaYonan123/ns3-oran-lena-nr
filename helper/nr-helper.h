@@ -1118,8 +1118,8 @@ class NrHelper : public Object
     NetDeviceContainer m_gnbNetDeviceContainer;
     NetDeviceContainer m_ueNetDeviceContainer;
     
-    // For tracking energy consumption per cell
     std::map<uint16_t, double> m_previousCellEnergy; //!< Previous total energy per cell ID
+    std::map<uint16_t, uint32_t> m_energyPrintCounter; //!< Throttle counter for [POWER] console line
     
     /**
      * \brief Format energy value with appropriate units (J, kJ, MJ, GJ)

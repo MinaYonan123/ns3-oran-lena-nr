@@ -33,7 +33,6 @@ class NrGnbComponentCarrierManager;
 class BwpManagerGnb;
 class NrMacScheduler;
 class NrKpiCollector;
-using NrPhyKpiCollector = NrKpiCollector;
 
 /**
  * \ingroup gnb
@@ -172,15 +171,10 @@ class NrGnbNetDevice : public NrNetDevice
     void BuildAndSendReportMessage (E2Termination::RicSubscriptionRequest_rval_s params);
     Ptr<KpmIndicationMessage> BuildRicIndicationMessageCuUp(std::string plmId);
     void BuildGUICuUp (); // Periodic GUI reporting for CSV logging
-
     /**
-     * \brief Attach a PHY KPI collector to this gNB device.
-     *
-     * When set, BuildRicIndicationMessageCuUp() will call Collect() on the
-     * collector and add the results to the E2 indication message via
-     * AddPhyKpiItem(), and log them to stdout.  Pass a null pointer to disable.
-     */
-    void SetPhyKpiCollector (Ptr<NrPhyKpiCollector> collector);
+     * \brief Attach a KPI collector to this gNB device.
+    */
+    void SetKpiCollector (Ptr<NrKpiCollector> collector);
     void SetE2Termination(Ptr<E2Termination> e2term); //// Added to set the E2 termination object
     Ptr<E2Termination> GetE2Termination() const; //// Added to get the E2 termination object
     void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle KPM subscription requests
@@ -297,7 +291,7 @@ class NrGnbNetDevice : public NrNetDevice
     std::map<uint32_t, double> m_imsiToJitter;
     std::map<uint32_t, double> m_imsiToPacketLoss;
     uint32_t m_nextImsiIndex = 1;
-    Ptr<NrPhyKpiCollector> m_phyKpiCollector; ///< Optional PHY KPI collector (null = disabled)
+    Ptr<NrKpiCollector> m_KpiCollector; ///< Optional KPI collector (null = disabled)
     std::vector<double> m_powerSamples;
     std::vector<double> m_portPowerConfig; ///< Configured port power allocation
     double m_currentPowerWatts; 

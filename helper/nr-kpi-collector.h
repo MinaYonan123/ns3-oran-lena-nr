@@ -26,8 +26,6 @@ class NrGnbNetDevice;
  * \brief Multi-layer KPI collector.
  *
  * Handles PHY, MAC, RLC, PDCP, and RRC layers in a single class.
- * Previously named NrPhyKpiCollector; kept in the same file for compatibility.
- * Typedef NrPhyKpiCollector is provided so existing call sites still compile.
  */
 class NrKpiCollector : public Object
 {

@@ -439,9 +439,9 @@ void
 }
 
 void
-NrGnbNetDevice::SetPhyKpiCollector(Ptr<NrPhyKpiCollector> collector)
+NrGnbNetDevice::SetKpiCollector(Ptr<NrKpiCollector> collector)
 {
-    m_phyKpiCollector = collector;
+    m_KpiCollector = collector;
 }
 
 void
@@ -736,10 +736,10 @@ NrGnbNetDevice::BuildRicIndicationMessageCuUp(std::string plmId)
       //indicationMessageHelper->FillCuUpValues (plmId);
     }
 
-  // --- PHY KPI collection (modular, opt-in) ---
-  if (m_phyKpiCollector)
+  // ---  KPI collection (modular, opt-in) ---
+  if (m_KpiCollector)
     {
-      NrKpiSnapshot phySnapshot = m_phyKpiCollector->CollectAll (this);
+      NrKpiSnapshot phySnapshot = m_KpiCollector->CollectAll (this);
       NrKpiCollector::PrintSnapshot (phySnapshot, std::cout);
 
       if (!indicationMessageHelper->IsOffline ())
@@ -802,9 +802,9 @@ NrGnbNetDevice::BuildGUICuUp ()
 {
   // --- Standalone PHY KPI log output (works without FlexRIC) ---
   // This fires every 100 ms regardless of whether an E2 subscription exists.
-  if (m_phyKpiCollector)
+  if (m_KpiCollector)
     {
-      NrKpiSnapshot phySnapshot = m_phyKpiCollector->CollectAll (this);
+      NrKpiSnapshot phySnapshot = m_KpiCollector->CollectAll (this);
       NrKpiCollector::PrintSnapshot (phySnapshot, std::cout);
     }
 
@@ -849,7 +849,7 @@ NrGnbNetDevice::BuildGUICuUp ()
           }
       }
   }
-  std::cout << "BuildGUICuUp: portsOn " << portsOn << " portsOff " << portsOff << std::endl;
+  NS_LOG_DEBUG("BuildGUICuUp: portsOn=" << portsOn << " portsOff=" << portsOff);
   uint8_t indicationFlag = m_flagIndicationSent ? 1 : 0;
   uint8_t controlFlag = m_flagControlMessageReceived ? 1 : 0;
   
@@ -924,9 +924,9 @@ NrGnbNetDevice::BuildGUICuUp ()
           double guiPeriod = 0.1; // seconds
           pdcpThroughput = bytesInPeriod / (guiPeriod * 1000.0); // Mbps
           m_lastThroughputPerUe[imsi] = pdcpThroughput;
-          std::cout<<"BuildGUICuUp: prevTxBytes=" << prevTxBytes 
-                   << ", bytesInPeriod=" << bytesInPeriod 
-                   << ", throughput=" << pdcpThroughput << " Mbps" << std::endl;
+          NS_LOG_DEBUG("BuildGUICuUp: prevTxBytes=" << prevTxBytes
+                       << " bytesInPeriod=" << bytesInPeriod
+                       << " throughput=" << pdcpThroughput << " Mbps");
         }
         
         // ===================================================================
@@ -1572,21 +1572,13 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
         double avgDelay = (ueCount > 0) ? sumDelay / ueCount : 0.0;
         double avgJitter = (ueCount > 0) ? sumJitter / ueCount : 0.0;
 
-        // Console log
-        NS_LOG_UNCOND("Cell stats-> gNB " << cellStats.cellId
-                      << " | PRB Usage: " << std::fixed << std::setprecision(0)
-                      << cellStats.prbUsagePercentage << " %"
-                      << " | Avg Last RB: " << std::fixed << std::setprecision(0)
-                      << cellStats.averageLastRb
-                      << " | Avg TP: " << std::fixed << std::setprecision(2) << avgTp << " Mbps"
-                      << " | Tot TP: " << std::fixed << std::setprecision(2) << sumTp << " Mbps"
-                      << " | Avg Loss: " << std::fixed << std::setprecision(2) << avgLoss * 100
-                      << " %"
-                      << " | Avg Delay: " << std::fixed << std::setprecision(2) << avgDelay
-                      << " ms"
-                      << " | Avg Jitter: " << std::fixed << std::setprecision(2) << avgJitter
-                      << " ms"
-                      << " | UE Count: " << ueCount);
+        NS_LOG_INFO("Cell stats-> gNB " << cellStats.cellId
+                    << " PRB=" << std::fixed << std::setprecision(0) << cellStats.prbUsagePercentage << "%"
+                    << " AvgTP=" << std::setprecision(2) << avgTp << " Mbps"
+                    << " TotTP=" << sumTp << " Mbps"
+                    << " Loss=" << std::setprecision(2) << avgLoss * 100 << "%"
+                    << " Delay=" << avgDelay << "ms"
+                    << " UEs=" << ueCount);
 
         // CSV
         traceFile << Simulator::Now().GetSeconds() << ","
@@ -1708,23 +1700,14 @@ NrGnbNetDevice::GetCellIdUlEarfcn(uint16_t cellId) const
         for (auto &pair: ueStatsMap) {
             UEStats &stats = pair.second;
 
-            NS_LOG_UNCOND("UE stats -> UE " << stats.IMSI
-                          << " | Cell ID: " << stats.cell_id // ✅ Explicit cell_id
-                          << " | SINR: " << std::fixed << std::setprecision(1) << stats.SINR
-                          << " dB"
-                          << " | RSRP: " << std::fixed << std::setprecision(0) << stats.RSRP
-                          << " dBm"
-                          << " | DL TP: " << std::fixed << std::setprecision(1) << stats.dl_tp
-                          << " Mbps"
-                          << " | MCS: " << static_cast<uint32_t>(stats.mcs)
-                          << " | RI: " << static_cast<uint32_t>(stats.ri)
-                          << " | CQI: " << static_cast<uint32_t>(stats.cqi)
-                          << " | Loss: " << std::fixed << std::setprecision(2)
-                          << stats.pktLoss * 100 << " %"
-                          << " | Delay: " << std::fixed << std::setprecision(2) << stats.delay
-                          << " ms"
-                          << " | Jitter: " << std::fixed << std::setprecision(2) << stats.jitter
-                          << " ms");
+            NS_LOG_INFO("UE stats -> IMSI=" << stats.IMSI
+                        << " Cell=" << stats.cell_id
+                        << " SINR=" << std::fixed << std::setprecision(1) << stats.SINR << "dB"
+                        << " RSRP=" << std::setprecision(0) << stats.RSRP << "dBm"
+                        << " TP=" << std::setprecision(1) << stats.dl_tp << "Mbps"
+                        << " MCS=" << static_cast<uint32_t>(stats.mcs)
+                        << " CQI=" << static_cast<uint32_t>(stats.cqi)
+                        << " Loss=" << std::setprecision(2) << stats.pktLoss * 100 << "%");
 
             traceFile << Simulator::Now().GetSeconds() << "," << stats.IMSI << ","
                     << stats.cell_id << "," // ✅ Explicit cell_id
@@ -1968,41 +1951,23 @@ NrGnbNetDevice::SampleTransmitPower()
             // - 1 port on, 100% PRB: 25W + (1/4)×75W×1.0 = 43.75W
             // ============================================================
             
-            const double basePowerRatio = 0.25;  // 25% base power (always on)
-            const double dynamicPowerRatio = 0.75; // 75% dynamic power (scales with ports)
-            
-            double basePowerWatts = totalMaxPowerWatts * basePowerRatio;
-            double dynamicPowerWatts = totalMaxPowerWatts * dynamicPowerRatio;
-            
-            // Calculate port scaling factor
             double portRatio = static_cast<double>(numActivePorts) / static_cast<double>(totalPorts);
-            
-            // Traffic factor: small adjustment (5-10%) based on PRB usage
-            // This accounts for power amplifier efficiency variation with load
-            // Range: 0.90 (low PRB) to 1.0 (high PRB)
-            double trafficFactor = 0.90 + (0.10 * prbUsageFactor);
-            
-            // Final effective power
-            // Base power is constant, dynamic power scales with ports and traffic
-            double effectivePowerWatts = basePowerWatts + 
-                                        (dynamicPowerWatts * portRatio * trafficFactor);
-            
+            double trafficFactor = NrGnbPhy::kTrafficFactorMin
+                                 + (1.0 - NrGnbPhy::kTrafficFactorMin) * prbUsageFactor;
+            double effectivePowerWatts = totalMaxPowerWatts
+                * (NrGnbPhy::kBasePowerRatio
+                   + NrGnbPhy::kDynamicPowerRatio * portRatio * trafficFactor);
+
             totalPower += effectivePowerWatts;
             numBwps++;
-            
-            // Convert to dBm for logging
-            double effectivePowerDbm = 10.0 * std::log10(std::max(1e-6, effectivePowerWatts)) + 30.0;
-            
-            std::cout << std::fixed << std::setprecision(2)
-                      << "Power calculation for BWP " << (int)bwp.first << ": "
-                      << "Base_TX=" << baseTxPowerDbm << " dBm (" << totalMaxPowerWatts << " W max), "
-                      << "Active_ports=" << numActivePorts << "/" << totalPorts << ", "
-                      << "Base_power=" << basePowerWatts << " W, "
-                      << "Dynamic_power=" << (dynamicPowerWatts * portRatio) << " W, "
-                      << "PRB_factor=" << std::setprecision(2) << prbUsageFactor << ", "
-                      << "Traffic_factor=" << std::setprecision(2) << trafficFactor << ", "
-                      << "Final=" << std::setprecision(2) << effectivePowerDbm << " dBm, "
-                      << "Watts=" << std::setprecision(3) << effectivePowerWatts << " W" << std::endl;
+
+            NS_LOG_INFO("BWP " << static_cast<int>(bwp.first)
+                        << ": baseTX=" << baseTxPowerDbm << " dBm"
+                        << " ports=" << numActivePorts << "/" << totalPorts
+                        << " portRatio=" << portRatio
+                        << " prb=" << prbUsageFactor
+                        << " tf=" << trafficFactor
+                        << " P=" << effectivePowerWatts << " W");
         }
     }
     

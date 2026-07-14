@@ -2420,19 +2420,27 @@ void NrHelper::CalculateAveragePowerPerCell()
             double energyPerUe = activeUeCount > 0 ? energyConsumedInInterval / activeUeCount : 0.0;
             double powerPerUe = activeUeCount > 0 ? currentUesTotalPower / activeUeCount : 0.0;
             
-            std::cout << "\n=== CELL " << cellId << " ENERGY REPORT ===" << std::endl;
-            std::cout << "[Time " << Simulator::Now().GetSeconds() << "s]" << std::endl;
-            std::cout << "Active UEs: " << activeUeCount << std::endl;
-            std::cout << "Energy consumed in last " << (intervalSeconds * 1000) << "ms: " 
-                      << energyConsumedInInterval << " J" << std::endl;
-            std::cout << "Average power in interval: " << averagePower << " W" << std::endl;
-            std::cout << "Current total power: " << currentTotalPower << " W" << std::endl;
-            std::cout << "  - gNB power: " << currentGnbPower << " W" << std::endl;
-            std::cout << "  - UEs total power: " << currentUesTotalPower << " W" << std::endl;
-            std::cout << "Energy per UE: " << energyPerUe << " J" << std::endl;
-            std::cout << "Power per UE: " << powerPerUe << " W" << std::endl;
-            std::cout << "Cumulative total energy: " << FormatEnergyWithUnits(currentTotalEnergy) << std::endl;
-            std::cout << "========================================\n" << std::endl;
+            // Print once per second (every 10 calls at 100 ms interval).
+            uint32_t& cnt = m_energyPrintCounter[cellId];
+            if (++cnt % 10 == 0)
+            {
+                double gnbPower = gnb->GetAveragePower();
+                std::cout << std::fixed << std::setprecision(2)
+                          << "[POWER] t=" << Simulator::Now().GetSeconds() << "s"
+                          << "  Cell " << cellId
+                          << "  UEs=" << activeUeCount
+                          << "  gNB=" << gnbPower << "W"
+                          << "  UEs=" << currentUesTotalPower << "W"
+                          << "  Total=" << (gnbPower + currentUesTotalPower) << "W"
+                          << "  Energy=" << FormatEnergyWithUnits(currentTotalEnergy)
+                          << std::endl;
+            }
+            NS_LOG_INFO("Cell " << cellId
+                        << " t=" << Simulator::Now().GetSeconds() << "s"
+                        << " P_gnb=" << currentGnbPower << "W"
+                        << " P_ues=" << currentUesTotalPower << "W"
+                        << " E_interval=" << energyConsumedInInterval << "J"
+                        << " E_total=" << FormatEnergyWithUnits(currentTotalEnergy));
             
             // Log to file for analysis
             LogEnergyToFile(cellId, energyConsumedInInterval, averagePower, currentTotalPower, 
@@ -2440,11 +2448,10 @@ void NrHelper::CalculateAveragePowerPerCell()
         }
         else
         {
-            // First measurement - just store the initial value
-            std::cout << "[Time " << Simulator::Now().GetSeconds() 
-                      << "s] [CellId " << cellId 
-                      << "] Initial total energy: " << FormatEnergyWithUnits(currentTotalEnergy) 
-                      << " (Active UEs: " << activeUeCount << ")" << std::endl;
+            NS_LOG_INFO("Cell " << cellId << " energy monitoring started t="
+                        << Simulator::Now().GetSeconds() << "s"
+                        << " initialEnergy=" << FormatEnergyWithUnits(currentTotalEnergy)
+                        << " UEs=" << activeUeCount);
         }
 
         // Update previous energy value for next interval
