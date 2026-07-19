@@ -1936,7 +1936,7 @@ NrHelper::EnableKpiReporting(const NrKpiReportingConfig& cfg,
         if (cfg.enableRrcReporting)
             collector->ConnectRrcTraces(gnb, ueDevs);
 
-        gnb->SetPhyKpiCollector(collector);
+        gnb->SetKpiCollector(collector);
         NS_LOG_INFO("EnableKpiReporting: attached collector to gNB "
                     << gnb->GetCellId() << " with " << entries.size() << " KPIs.");
     }
