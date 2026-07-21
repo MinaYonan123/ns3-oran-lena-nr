@@ -1853,196 +1853,88 @@ void
 NrGnbNetDevice::SampleTransmitPower()
 {
     NS_LOG_FUNCTION(this);
-    
+
     double totalPower = 0.0;
     uint32_t numBwps = 0;
-    
-    // Get PRB usage statistics
-    Ptr<NrGnbPhy> gnbPhy = GetPhy(0);
-    double prbUsageFactor = 1.0; // Default to 100% if stats not available
     uint16_t numActiveUes = 0;
-    
-    if (gnbPhy)
+
+    if (m_rrc)
     {
-        NrGnbPhy::RbStats stats = gnbPhy->GetRBStats();
-        
-        // PRB usage percentage (0-100) converted to factor (0.0-1.0)
-        if (stats.iterations > 0)
-        {
-            prbUsageFactor = (stats.prbUsagePercentage / stats.iterations) / 100.0;
-        }
-        else
-        {
-            prbUsageFactor = stats.prbUsagePercentage / 100.0;
-        }
-        
-        // Clamp to valid range [0.0, 1.0]
-        prbUsageFactor = std::max(0.0, std::min(1.0, prbUsageFactor));
-        
-        // Get number of active UEs
-        auto ueMap = m_rrc->GetUeMap();
-        numActiveUes = static_cast<uint16_t>(ueMap.size());
+        numActiveUes = static_cast<uint16_t>(m_rrc->GetUeMap().size());
     }
-    
-    // Calculate number of active ports (ports with power > 0)
-    uint16_t numActivePorts = 0;
-    if (!m_portPowerConfig.empty())
-    {
-        for (double portPower : m_portPowerConfig)
-        {
-            if (portPower > 0.0)
-            {
-                numActivePorts++;
-            }
-        }
-    }
-    else
-    {
-        // Default: assume all ports active if config not set
-        numActivePorts = 4; // Default number of ports
-    }
-    
-    // Get total number of ports (typically 4)
-    uint16_t totalPorts = m_portPowerConfig.empty() ? 4 : static_cast<uint16_t>(m_portPowerConfig.size());
-    
-    // Calculate current transmit power from all BWPs
+
+    // One shared model: each BWP PHY computes power from base TxPower,
+    // m_portPowerScaling, and cached PRB utilization.
     for (auto& bwp : m_ccMap)
     {
         Ptr<NrGnbPhy> phy = bwp.second->GetPhy();
-        if (phy)
+        if (!phy)
         {
-            // Get base TX power from PHY (50 dBm from scenario - this is TOTAL power when all ports are on)
-            // Note: GetTxPower() may return effective power with port scaling, so we need the base
-            // The scenario sets TxPower attribute to 50 dBm
-            double baseTxPowerDbm = phy->GetTxPower(); // This gets effective power (may include port scaling)
-            
-            // If GetTxPower() returns effective power, we need to get the base power
-            // Check if port scaling is applied - if so, reverse it to get base power
-            double portScaling = phy->GetPortPowerScaling();
-            if (portScaling > 0.0 && portScaling < 1.0)
-            {
-                baseTxPowerDbm -= 10.0 * std::log10(portScaling);
-            }
-            
-            if (baseTxPowerDbm <= 0)
-            {
-                baseTxPowerDbm = 50.0; // Default: 50 dBm = 100 W (from scenario)
-            }
-            
-            // Convert total base power to watts (50 dBm = 100 W when all 4 ports are on)
-            double totalMaxPowerWatts = std::pow(10.0, (baseTxPowerDbm - 30.0) / 10.0);
-            
-            // ============================================================
-            // REAL 5G gNB POWER CONSUMPTION MODEL (Telecom Expert)
-            // ============================================================
-            // Model: P_total = P_base + (N_active / N_total) × P_dynamic × traffic_factor
-            //
-            // Where:
-            // - P_base = 25% of max power (baseband, cooling, control plane) = 25 W
-            // - P_dynamic = 75% of max power (RF amplifiers, scales with active ports) = 75 W
-            // - N_active = number of active ports
-            // - N_total = total number of ports (4)
-            // - traffic_factor = small adjustment (0.9 to 1.0) based on PRB usage
-            //
-            // Real values for 50 dBm (100W) gNB:
-            // - 4 ports on, 100% PRB: 25W + (4/4)×75W×1.0 = 100W
-            // - 4 ports on, 50% PRB: 25W + (4/4)×75W×0.95 = 96.25W (small reduction)
-            // - 2 ports on, 100% PRB: 25W + (2/4)×75W×1.0 = 62.5W
-            // - 1 port on, 100% PRB: 25W + (1/4)×75W×1.0 = 43.75W
-            // ============================================================
-            
-            double portRatio = static_cast<double>(numActivePorts) / static_cast<double>(totalPorts);
-            double trafficFactor = NrGnbPhy::kTrafficFactorMin
-                                 + (1.0 - NrGnbPhy::kTrafficFactorMin) * prbUsageFactor;
-            double effectivePowerWatts = totalMaxPowerWatts
-                * (NrGnbPhy::kBasePowerRatio
-                   + NrGnbPhy::kDynamicPowerRatio * portRatio * trafficFactor);
-
-            totalPower += effectivePowerWatts;
-            numBwps++;
-
-            NS_LOG_INFO("BWP " << static_cast<int>(bwp.first)
-                        << ": baseTX=" << baseTxPowerDbm << " dBm"
-                        << " ports=" << numActivePorts << "/" << totalPorts
-                        << " portRatio=" << portRatio
-                        << " prb=" << prbUsageFactor
-                        << " tf=" << trafficFactor
-                        << " P=" << effectivePowerWatts << " W");
+            continue;
         }
+
+        double bwpPower = phy->GetCurrentPowerConsumption();
+        totalPower += bwpPower;
+        numBwps++;
+
+        NS_LOG_INFO("BWP " << static_cast<int>(bwp.first)
+                    << ": scaling=" << phy->GetPortPowerScaling()
+                    << " prb=" << phy->GetPrbUtilization()
+                    << " P=" << bwpPower << " W");
     }
-    
+
     if (numBwps > 0)
     {
-        // Store current power directly (NO SAMPLING, NO SMOOTHING)
-        m_currentPowerWatts = totalPower; // Store in watts
-        
- // ============================================================
-        // ACCUMULATE POWER FOR BASELINE vs xAPP COMPARISON
-        // Both periods are exactly 25 seconds (250 samples) for fair comparison
-        // Baseline: 0-25 seconds (WITHOUT xApp - use actual power)
-        // xApp: 25-50 seconds (WITH xApp - use actual power)
-        // ============================================================
+        m_currentPowerWatts = totalPower;
+
         double currentTime = Simulator::Now().GetSeconds();
-        double baselinePeriodStart = 0.0;
-        double baselinePeriodEnd = 25.0;
-        double xAppPeriodStart = 25.0;
-        double xAppPeriodEnd = 50.0;
-        
-        // BASELINE PERIOD: 0 to 25 seconds
-        // Accumulate ALL samples during 0-25s (no m_xAppActive check)
-        // For baseline period
+        const double baselinePeriodStart = 0.0;
+        const double baselinePeriodEnd = 25.0;
+        const double xAppPeriodStart = 25.0;
+        const double xAppPeriodEnd = 50.0;
+
         if (currentTime >= baselinePeriodStart && currentTime < baselinePeriodEnd)
         {
             m_baselineAccumulatedPower += totalPower;
             m_baselineSampleCount++;
-            
-            // Update min/max/current
-            // If first sample OR power is less than current min
-            if (m_baselineSampleCount == 1 || totalPower < m_baselineMinPower) {
+            if (m_baselineSampleCount == 1 || totalPower < m_baselineMinPower)
+            {
                 m_baselineMinPower = totalPower;
             }
-            if (totalPower > m_baselineMaxPower) m_baselineMaxPower = totalPower;
+            if (totalPower > m_baselineMaxPower)
+            {
+                m_baselineMaxPower = totalPower;
+            }
             m_baselineCurrentPower = totalPower;
         }
 
-        // For xApp period  
         if (currentTime >= xAppPeriodStart && currentTime < xAppPeriodEnd)
         {
             m_xAppAccumulatedPower += totalPower;
             m_xAppSampleCount++;
-            
-            // Update min/max/current
-            // If first sample OR power is less than current min
-            if (m_xAppSampleCount == 1 || totalPower < m_xAppMinPower) {
+            if (m_xAppSampleCount == 1 || totalPower < m_xAppMinPower)
+            {
                 m_xAppMinPower = totalPower;
             }
-            if (totalPower > m_xAppMaxPower) m_xAppMaxPower = totalPower;
+            if (totalPower > m_xAppMaxPower)
+            {
+                m_xAppMaxPower = totalPower;
+            }
             m_xAppCurrentPower = totalPower;
         }
         else if (currentTime > xAppPeriodEnd)
         {
-            // xApp period completed - stop accumulating
-            // The average is already calculated and stored in m_xAppAvgPower
             if (m_xAppActive && m_xAppSampleCount > 0)
             {
                 NS_LOG_DEBUG("xApp period completed at " << currentTime << "s. "
-                             << "Final avg=" << m_xAppAvgPower << " W over " 
+                             << "Final avg=" << m_xAppAvgPower << " W over "
                              << m_xAppSampleCount << " samples (period: 25-50s)");
             }
         }
 
-        // ============================================================
-        // POWER TRACKING FOR COMPARISON: Baseline vs xApp
-        // ============================================================
-        
         if (!m_xAppActive)
         {
-            // BASELINE SCENARIO: Only throughput changes, no port changes
-            // Calculate what power would be with all ports on (baseline)
-            // This simulates the scenario without xApp
-            double baselinePower = totalPower; // Current power (all ports on, throughput varies)
-            
-            // Update baseline min/max
+            double baselinePower = totalPower;
             if (baselinePower < m_baselineMinPower)
             {
                 m_baselineMinPower = baselinePower;
@@ -2052,16 +1944,10 @@ NrGnbNetDevice::SampleTransmitPower()
                 m_baselineMaxPower = baselinePower;
             }
             m_baselineCurrentPower = baselinePower;
-            
-            NS_LOG_DEBUG("Baseline power: " << baselinePower << " W (min=" 
-                         << m_baselineMinPower << ", max=" << m_baselineMaxPower << ")");
         }
         else
         {
-            // xAPP SCENARIO: Throughput changes + port changes
             m_xAppCurrentPower = totalPower;
-            
-            // Update xApp min/max
             if (totalPower < m_xAppMinPower)
             {
                 m_xAppMinPower = totalPower;
@@ -2070,38 +1956,18 @@ NrGnbNetDevice::SampleTransmitPower()
             {
                 m_xAppMaxPower = totalPower;
             }
-            
-            // Calculate baseline power for comparison (what it would be with all ports on)
-            // Recalculate with all ports active to simulate baseline scenario
+
+            // Simulated baseline: same PHY model with all ports on (scaling = 1.0)
             double baselinePower = 0.0;
             for (auto& bwp : m_ccMap)
             {
                 Ptr<NrGnbPhy> phy = bwp.second->GetPhy();
                 if (phy)
                 {
-                    double baseTxPowerDbm = phy->GetTxPower();
-                    double portScaling = phy->GetPortPowerScaling();
-                    if (portScaling > 0.0 && portScaling < 1.0)
-                    {
-                        baseTxPowerDbm = baseTxPowerDbm - 10.0 * std::log10(portScaling);
-                    }
-                    if (baseTxPowerDbm <= 0) baseTxPowerDbm = 50.0;
-                    
-                    double totalMaxPowerWatts = std::pow(10.0, (baseTxPowerDbm - 30.0) / 10.0);
-                    const double basePowerRatio = 0.25;
-                    const double dynamicPowerRatio = 0.75;
-                    double basePowerWatts = totalMaxPowerWatts * basePowerRatio;
-                    double dynamicPowerWatts = totalMaxPowerWatts * dynamicPowerRatio;
-                    
-                    // Calculate with all ports on (baseline scenario)
-                    double portRatio = 1.0; // All ports on
-                    double trafficFactor = 0.90 + (0.10 * prbUsageFactor);
-                    double baselineBwpPower = basePowerWatts + (dynamicPowerWatts * portRatio * trafficFactor);
-                    baselinePower += baselineBwpPower;
+                    baselinePower += phy->ComputePowerConsumption(1.0);
                 }
             }
-            
-            // Update baseline stats even when xApp is active (for comparison)
+
             if (baselinePower < m_baselineMinPower)
             {
                 m_baselineMinPower = baselinePower;
@@ -2111,20 +1977,16 @@ NrGnbNetDevice::SampleTransmitPower()
                 m_baselineMaxPower = baselinePower;
             }
             m_baselineCurrentPower = baselinePower;
-            
-            NS_LOG_DEBUG("xApp power: " << totalPower << " W (min=" 
+
+            NS_LOG_DEBUG("xApp power: " << totalPower << " W (min="
                          << m_xAppMinPower << ", max=" << m_xAppMaxPower << "), "
                          << "Baseline (simulated): " << baselinePower << " W");
         }
-        
-        NS_LOG_DEBUG("Current power: " << (10.0 * std::log10(std::max(1e-6, totalPower)) + 30.0) 
-                     << " dBm (" << totalPower << " W) from " 
-                     << numBwps << " BWPs, Active ports: " << numActivePorts
-                     << ", PRB usage: " << (prbUsageFactor * 100.0) 
-                     << "%, UEs: " << numActiveUes);
+
+        NS_LOG_DEBUG("Current power: " << totalPower << " W from "
+                     << numBwps << " BWPs, UEs: " << numActiveUes);
     }
-    
-    // Schedule next sample in 100ms
+
     Simulator::Schedule(MilliSeconds(100), &NrGnbNetDevice::SampleTransmitPower, this);
 }
 

@@ -247,7 +247,6 @@ class NrGnbNetDevice : public NrNetDevice
     bool DoSend(Ptr<Packet> packet, const Address& dest, uint16_t protocolNumber) override;
     void SetStartTime (uint64_t); ////Added to set the start time
 
-
   private:
     Ptr<NrGnbRrc> m_rrc;
 
@@ -262,7 +261,6 @@ class NrGnbNetDevice : public NrNetDevice
     double  rc_e2_func_id ; // to RC  function id
     double e2_func_id; //to pass kpm function id
     double ccc_func_id; //to pass ccc function id
-      
     bool m_stopSendingMessages;
     bool m_isReportingEnabled;
     bool m_flagControlMessageReceived;

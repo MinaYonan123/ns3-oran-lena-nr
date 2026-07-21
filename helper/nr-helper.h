@@ -318,7 +318,7 @@ class NrHelper : public Object
      *
      * For each gNB device in \p gnbDevs this method:
      *  1. Validates the requested KPI names against the registry.
-     *  2. Creates a NrPhyKpiCollector, configures it, and connects its traces.
+     *  2. Creates a NrKpiCollector, configures it, and connects its traces.
      *  3. Attaches the collector to the gNB via SetPhyKpiCollector().
      *
      * Must be called AFTER nrHelper->EnableTraces() so that the trace sources
@@ -979,28 +979,6 @@ class NrHelper : public Object
     std::string m_e2ip;
     uint16_t m_e2port;
     uint16_t m_e2localPort;
-    /**
-     * \brief Start periodic energy monitoring for all cells
-     */
-    void StartEnergyMonitoring();
-
-    /**
-     * \brief Calculate and print the average power per cell (gNB + attached UEs)
-     */
-    void CalculateAveragePowerPerCell();
-
-    /**
-     * \brief Log energy consumption data to CSV file
-     * \param cellId Cell identifier
-     * \param intervalEnergy Energy consumed in the interval
-     * \param averagePower Average power in the interval
-     * \param currentPower Current total power consumption
-     * \param activeUes Number of active UEs
-     * \param gnbPower Current gNB power
-     * \param uesTotalPower Total UE power consumption
-     */
-    void LogEnergyToFile(uint16_t cellId, double intervalEnergy, double averagePower, 
-                        double currentPower, uint32_t activeUes, double gnbPower, double uesTotalPower);
   private:
     bool m_enableMimoFeedback{false}; ///< Let UE compute MIMO feedback with PMI and RI
     ObjectFactory m_pmSearchFactory;  ///< Factory for precoding matrix search algorithm
@@ -1118,15 +1096,6 @@ class NrHelper : public Object
     NetDeviceContainer m_gnbNetDeviceContainer;
     NetDeviceContainer m_ueNetDeviceContainer;
     
-    std::map<uint16_t, double> m_previousCellEnergy; //!< Previous total energy per cell ID
-    std::map<uint16_t, uint32_t> m_energyPrintCounter; //!< Throttle counter for [POWER] console line
-    
-    /**
-     * \brief Format energy value with appropriate units (J, kJ, MJ, GJ)
-     * \param energyJoules Energy value in Joules
-     * \return Formatted string with value and unit
-     */
-    std::string FormatEnergyWithUnits(double energyJoules);
 };
 
 } // namespace ns3

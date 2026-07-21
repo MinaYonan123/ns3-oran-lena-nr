@@ -503,7 +503,6 @@ NrGnbPhy::StartEventLoop(uint16_t frame, uint8_t subframe, uint16_t slot)
                  << "\t Channel bandwidth: " << GetChannelBandwidth() << " Hz" << std::endl
                  << "\t Channel central freq: " << GetCentralFrequency() << " Hz" << std::endl
                  << "\t Num. RB: " << GetRbNum());
-
     SfnSf startSlot(frame, subframe, slot, GetNumerology());
     InitializeMessageList();
     StartSlot(startSlot);
@@ -1065,7 +1064,6 @@ NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo& allocInfo) const
 
     m_RbStats = rbStats;
 }
-
 
 void
 NrGnbPhy::DoStartSlot()
@@ -2048,17 +2046,24 @@ NrGnbPhy::GetTotalEnergyConsumption() const {
     return energyAccumulated; // in Joules
 }
 
-double 
-NrGnbPhy::GetCurrentPowerConsumption() const
+double
+NrGnbPhy::ComputePowerConsumption(double portScaling) const
 {
-    // Proportional model consistent with NrGnbNetDevice::SampleTransmitPower.
+    // Single shared model used by SampleTransmitPower / KPIs / energy accumulator.
     // P = P_max * (kBasePowerRatio + kDynamicPowerRatio * portScaling * trafficFactor)
-    // m_txPower is in dBm; convert to Watts for P_max.
+    // m_txPower is base TX power in dBm (attribute); convert to Watts for P_max.
+    double clampedScaling = std::max(0.0, std::min(1.0, portScaling));
     double totalMaxPowerWatts = std::pow(10.0, (m_txPower - 30.0) / 10.0);
-    double prbUtil      = GetPrbUtilization();
+    double prbUtil = GetPrbUtilization();
     double trafficFactor = kTrafficFactorMin + (1.0 - kTrafficFactorMin) * prbUtil;
     return totalMaxPowerWatts
-           * (kBasePowerRatio + kDynamicPowerRatio * m_portPowerScaling * trafficFactor);
+           * (kBasePowerRatio + kDynamicPowerRatio * clampedScaling * trafficFactor);
+}
+
+double
+NrGnbPhy::GetCurrentPowerConsumption() const
+{
+    return ComputePowerConsumption(m_portPowerScaling);
 }
 
 double
@@ -2080,24 +2085,5 @@ NrGnbPhy::GetPrbUtilization() const
     }
     return m_lastPrbUtil;
 }
-
-double
-NrGnbPhy::GetSchedulingActivity() const
-{
-    // Calculate scheduling activity based on active UEs and data in buffers
-    uint32_t activeUes = 0;
-    
-    // Count UEs with pending data
-    if (m_phySapUser)
-    {
-        // This would need integration with MAC layer to get buffer status
-        // For now, use a simplified approach based on recent transmissions
-        activeUes = m_deviceMap.size(); // Number of connected UEs
-    }
-    
-    // Normalize activity (assume max 64 UEs per cell)
-    return std::min(1.0, static_cast<double>(activeUes) / 64.0);
-}
-
 
 } // namespace ns3

@@ -435,9 +435,16 @@ class NrGnbPhy : public NrPhy
      */
     void ChangeToQuasiOmniBeamformingVector();
 
-        /**
+    /**
+     * \brief Compute power consumption for a given port scaling (Watts).
+     * \param portScaling Fraction of ports/power active in [0,1]
+     * \return Instantaneous power using P_max, PRB util, and shared k* ratios
+     */
+    double ComputePowerConsumption(double portScaling) const;
+
+    /**
      * \brief Get the current power consumption of this PHY (in Watts)
-     * \return Current power consumption based on activity and state
+     * \return Current power using m_portPowerScaling
      */
     double GetCurrentPowerConsumption() const;
 
@@ -465,12 +472,6 @@ class NrGnbPhy : public NrPhy
      */
     double GetPrbUtilization() const;
 
-    /**
-     * \brief Get current scheduling activity level
-     * \return Scheduling activity between 0.0 and 1.0
-     */
-    double GetSchedulingActivity() const;
-
     struct RbStats {
       uint16_t cellId = 0;         // Cell ID
       double prbUsagePercentage = 0; // PRB usage percentage
@@ -479,7 +480,7 @@ class NrGnbPhy : public NrPhy
     };
 
     RbStats GetRBStats();
-
+    
   protected:
     /**
      * \brief DoDispose method inherited from Object
@@ -497,7 +498,6 @@ class NrGnbPhy : public NrPhy
     double m_portPowerScaling{1.0};        //!< Port power scaling factor (activePorts/totalPorts)
     mutable double m_lastPrbUtil{0.0};     //!< Last valid PRB utilisation (cache for when m_RbStats resets)
       double energyAccumulated = 0.0; // in Joules
-
     /**
      * \brief Set the current slot pattern (better to call it only once..)
      * \param pattern the pattern
@@ -905,7 +905,6 @@ class NrGnbPhy : public NrPhy
     bool m_isPrimary{false}; //!< Is this PHY a primary phy?
 
     Time m_lastBfChange; //!< Saves the timestamp when the beamforming vector changes.
-
     mutable RbStats m_RbStats; // store RBStats
 };
 
