@@ -93,10 +93,15 @@ class NrGnbPhy : public NrPhy
     friend class NrMemberPhySapProvider;
 
   public:
-    // Power model constants shared by all power-calculation sites.
-    static constexpr double kBasePowerRatio    = 0.25; ///< Fraction of max TX power always consumed
-    static constexpr double kDynamicPowerRatio = 0.75; ///< Fraction that scales with ports & load
-    static constexpr double kTrafficFactorMin  = 0.90; ///< Minimum traffic factor (at 0 % PRB)
+    /**
+     * Power model constants from 3GPP TR 38.864 §5.1 (Rel-18 Network Energy Savings).
+     * Relative powers: BS Category 1, Reference Configuration Set 1 (FR1 TDD macro mMIMO).
+     * Active DL: P = P_static + P_dynamic, with spatial (s_a), frequency (s_f), power (s_p) scaling.
+     */
+    static constexpr double kRelPowerMicroSleep = 55.0;  ///< P3 — micro-sleep relative power (static baseline)
+    static constexpr double kRelPowerActiveDl   = 280.0; ///< P4 — Active DL relative power (full reference)
+    static constexpr double kAnteShareA         = 0.4;   ///< A — antenna/ante share of dynamic power (baseline)
+    static constexpr double kPaEfficiencyEta   = 1.0;   ///< η(s_f, s_p) — PA efficiency factor (baseline = 1)
 
     /**
      * \brief Get Type id
@@ -436,9 +441,14 @@ class NrGnbPhy : public NrPhy
     void ChangeToQuasiOmniBeamformingVector();
 
     /**
-     * \brief Compute power consumption for a given port scaling (Watts).
-     * \param portScaling Fraction of ports/power active in [0,1]
-     * \return Instantaneous power using P_max, PRB util, and shared k* ratios
+     * \brief Compute Active-DL power (Watts) per 3GPP TR 38.864 §5.1.
+     * \param portScaling s_a — fraction of active TRxRUs / antenna ports in [0,1] (from CCC)
+     * \return Instantaneous power in Watts (scaled from configured TX power P_max)
+     *
+     * Uses TR 38.864 baseline Active DL model:
+     *   P_rel = P_static + s_a * ( P_dyn,ante + (s_f * s_p / η) * P_dyn,joint )
+     *   P_watts = P_max * (P_rel / P4)
+     * where s_f is PRB utilization and s_p = 1 (PSD per TxRU unchanged under port muting).
      */
     double ComputePowerConsumption(double portScaling) const;
 

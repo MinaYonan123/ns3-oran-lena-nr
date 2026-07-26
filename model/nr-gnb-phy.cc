@@ -2049,15 +2049,39 @@ NrGnbPhy::GetTotalEnergyConsumption() const {
 double
 NrGnbPhy::ComputePowerConsumption(double portScaling) const
 {
-    // Single shared model used by SampleTransmitPower / KPIs / energy accumulator.
-    // P = P_max * (kBasePowerRatio + kDynamicPowerRatio * portScaling * trafficFactor)
-    // m_txPower is base TX power in dBm (attribute); convert to Watts for P_max.
-    double clampedScaling = std::max(0.0, std::min(1.0, portScaling));
-    double totalMaxPowerWatts = std::pow(10.0, (m_txPower - 30.0) / 10.0);
-    double prbUtil = GetPrbUtilization();
-    double trafficFactor = kTrafficFactorMin + (1.0 - kTrafficFactorMin) * prbUtil;
-    return totalMaxPowerWatts
-           * (kBasePowerRatio + kDynamicPowerRatio * clampedScaling * trafficFactor);
+    // 3GPP TR 38.864 §5.1 — Active DL energy consumption model (Rel-18 NES).
+    // Shared by SampleTransmitPower, KPIs, and the energy accumulator.
+    //
+    // P_DL = P_static + P_dynamic
+    // P_static = P3  (micro-sleep relative power; baseline)
+    // P_dynamic = s_a * ( P_dyn,ante + (s_f * s_p / η) * P_dyn,joint )
+    //   P_dyn,ante  = A * (P4 - P_static)
+    //   P_dyn,joint = (1 - A) * (P4 - P_static)   [with η(1,1) = 1]
+    // Absolute Watts: P = P_max * (P_rel / P4)
+    //
+    // Mapping to this simulator:
+    //   s_a = portScaling  (CCC active antenna-port / TRxRU fraction)
+    //   s_f = PRB utilization (occupied resources / max BW proxy)
+    //   s_p = 1.0          (PSD per active TxRU unchanged when ports are muted)
+    //   η   = kPaEfficiencyEta (baseline 1.0)
+
+    const double s_a = std::max(0.0, std::min(1.0, portScaling));
+    const double s_f = std::max(0.0, std::min(1.0, GetPrbUtilization()));
+    const double s_p = 1.0;
+    const double eta = kPaEfficiencyEta;
+
+    const double pStatic = kRelPowerMicroSleep; // P3
+    const double pActive = kRelPowerActiveDl;   // P4
+    const double dynBudget = pActive - pStatic; // P4 - P_static
+    const double pDynAnte = kAnteShareA * dynBudget;
+    const double pDynJoint = (1.0 - kAnteShareA) * dynBudget;
+
+    const double pDynamic = s_a * (pDynAnte + (s_f * s_p / eta) * pDynJoint);
+    const double pRel = pStatic + pDynamic;
+
+    // Configured RF TX power (dBm) → reference P_max in Watts at full Active DL.
+    const double pMaxWatts = std::pow(10.0, (m_txPower - 30.0) / 10.0);
+    return pMaxWatts * (pRel / pActive);
 }
 
 double
@@ -2075,13 +2099,13 @@ NrGnbPhy::CalculateActivityFactor() const
 double
 NrGnbPhy::GetPrbUtilization() const
 {
-    // Use the slot-level RB statistics collected by the scheduler.
-    // If statistics have been reset (iterations==0), fall back to the last
-    // valid value so that GetCurrentPowerConsumption() never sees a spurious 0.
+    // Use the slot-level RB statistics collected by the scheduler (non-destructive).
+    // Prefer the live accumulating window; if E2 just reset it (iterations==0),
+    // use m_lastPrbUtil which GetRBStats() refreshes on every consume.
     if (m_RbStats.iterations > 0)
     {
         double util = (m_RbStats.prbUsagePercentage / m_RbStats.iterations) / 100.0;
-        m_lastPrbUtil = std::min(1.0, util);
+        m_lastPrbUtil = std::max(0.0, std::min(1.0, util));
     }
     return m_lastPrbUtil;
 }
