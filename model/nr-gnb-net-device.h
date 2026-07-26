@@ -7,9 +7,18 @@
 
 #include "nr-fh-control.h"
 #include "nr-net-device.h"
+#include "ns3/nstime.h"
+#include <vector>
+#include <functional>
+#include <map>
 
 #include "ns3/traced-callback.h"
+#include "ns3/nr-bearer-stats-calculator.h"
+#include "nr-radio-bearer-info.h"
 #include <ns3/oran-interface.h>
+#include "E2SM-KPM-ActionDefinition.h"
+#include "ns3/flow-monitor-module.h"     // for Ptr<FlowMonitor>
+#include "ns3/ipv4-flow-classifier.h"    // for Ptr<Ipv4FlowClassifier>
 namespace ns3
 {
 
@@ -23,6 +32,7 @@ class BandwidthPartGnb;
 class NrGnbComponentCarrierManager;
 class BwpManagerGnb;
 class NrMacScheduler;
+class NrKpiCollector;
 
 /**
  * \ingroup gnb
@@ -30,6 +40,12 @@ class NrMacScheduler;
  *
  * This class represent the GNB NetDevice.
  */
+bool lessThan(int x, int y);
+bool greaterThan(int x, int y);
+bool equal(int x, int y);
+
+  // Declare the MATH_CALL_BACKS vector
+extern std::vector<std::function<bool(int, int)>> MATH_CALL_BACKS;
 class NrGnbNetDevice : public NrNetDevice
 {
   public:
@@ -141,18 +157,95 @@ class NrGnbNetDevice : public NrNetDevice
      * \return uplink earfcn
      */
     uint32_t GetCellIdUlEarfcn(uint16_t cellId) const;
-    void SetE2Termination(Ptr<E2Termination> e2term);
-    Ptr<E2Termination> GetE2Termination() const;
-    void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu);
-    void ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu);
-    void stopSendingAndCancelSchedule();
-    bool m_forceE2FileLogging;
-    
+
+    void Cell_KPI_tracker();
+
+    void UE_KPI_tracker();
+
+    void SetFlowMonitor(ns3::Ptr<ns3::FlowMonitor> monitor);
+    void SetIpv4FlowClassifier(ns3::Ptr<ns3::Ipv4FlowClassifier> classifier);
+    void SampleThroughput(Ptr<FlowMonitor> monitor,
+                          Ptr<Ipv4FlowClassifier> classifier,
+                          double intervalSec);
+    std::string GetImsiString(uint64_t imsi);
+    void BuildAndSendReportMessage (E2Termination::RicSubscriptionRequest_rval_s params);
+    Ptr<KpmIndicationMessage> BuildRicIndicationMessageCuUp(std::string plmId);
+    void BuildGUICuUp (); // Periodic GUI reporting for CSV logging
+    /**
+     * \brief Attach a KPI collector to this gNB device.
+    */
+    void SetKpiCollector (Ptr<NrKpiCollector> collector);
+    void SetE2Termination(Ptr<E2Termination> e2term); //// Added to set the E2 termination object
+    Ptr<E2Termination> GetE2Termination() const; //// Added to get the E2 termination object
+    void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle KPM subscription requests
+    void CCCcontrolMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle CCC subscription requests
+    void ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu); //// Added to handle control messages
+    void stopSendingAndCancelSchedule();  //// Added to stop sending messages and cancel schedule
+    void CheckReportingFlag (void);
+    bool m_forceE2FileLogging;  //// A flag to force E2 file logging
+    bool m_reducedPmValues; //< if true use a reduced subset of pmvalues
+    double m_e2Periodicity;
+    bool m_is_reported = false;
+    bool m_hasValidSubscription ;
+    bool m_sendCuUp;
+    std::string m_cuUpFileName;
+
+    struct CellStats {
+        uint16_t cellId = 0;         // Cell ID
+        double prbUsagePercentage = 0; // PRB usage percentage
+        double averageLastRb= 0;    // Store the average value of the last RBG
+    };
+
+    struct UEStats {
+        uint64_t IMSI;
+        double SINR = 0;       // dB
+        double RSRP = 0;       // dBm
+        double dl_tp = 0;      // Mbps
+        bool tp_ongoing = false;
+        uint8_t mcs = 0;
+        uint8_t ri  = 0;
+        uint8_t cqi = 0;
+        double pktLoss = 0.0;  // Packet loss ratio [0..1]
+        double delay   = 0.0;  // Mean delay [ms]
+        double jitter  = 0.0;  // Mean jitter [ms]
+        int cell_id = 0;
+    };
+
+    /**
+     * \brief Set port power allocation for all BWPs
+     * \param portPowerVec Vector of port power values (must sum to ~1.0)
+     */
+    void SetPortPower (const std::vector<double>& portPowerVec);
+
+    /**
+     * \brief Get current port power allocation from first BWP
+     * \return Vector of port power values
+     */
+    std::vector<double> GetPortPower() const;
+
+    /**
+     * \brief Calculate and sample current transmit power
+     * Called periodically to track average power
+     */
+    void SampleTransmitPower();
+
+    /**
+     * \brief Get average transmit power over sampling period
+     * \return Average power in dBm
+     */
+    double GetAveragePower() const;
+
+    /**
+     * \brief Clear power samples
+     */
+    void ClearPowerSamples();
+
   protected:
     void DoInitialize() override;
 
     void DoDispose() override;
     bool DoSend(Ptr<Packet> packet, const Address& dest, uint16_t protocolNumber) override;
+    void SetStartTime (uint64_t); ////Added to set the start time
 
   private:
     Ptr<NrGnbRrc> m_rrc;
@@ -164,11 +257,58 @@ class NrGnbNetDevice : public NrNetDevice
     Ptr<NrGnbComponentCarrierManager>
         m_componentCarrierManager; ///< the component carrier manager of this gNB
     Ptr<NrFhControl> m_nrFhControl;
-    Ptr<E2Termination> m_e2term;
-    double  rc_e2_func_id ; // to RC
+    Ptr<E2Termination> m_e2term;  /// A pointer to the E2 termination object 
+    double  rc_e2_func_id ; // to RC  function id
     double e2_func_id; //to pass kpm function id
+    double ccc_func_id; //to pass ccc function id
     bool m_stopSendingMessages;
     bool m_isReportingEnabled;
+    bool m_flagControlMessageReceived;
+    bool m_flagIndicationSent; 
+    std::map<uint64_t, double> m_prevTxBytesPerUe;
+    std::map<uint64_t, double> m_lastThroughputPerUe; ///< Last calculated throughput per UE (Mbps)
+    uint16_t m_NewportsOn;
+    uint16_t m_NewportsOff;
+    uint64_t m_startTime;///// Added to set the start time
+    Time m_checkPeriod;
+    Ptr<NrBearerStatsCalculator> m_e2PdcpStatsCalculator;
+    E2Termination::RicSubscriptionRequest_rval_s m_lastSubscriptionParams;
+    Ptr<KpmIndicationHeader> BuildRicIndicationHeader(std::string plmId, std::string gnbId, uint16_t nrCellId); //// Added to build the KPM indication header
+
+
+    bool m_isCellConfigured{false}; ///< variable to check whether the RRC has been configured
+    uint64_t sim_id;
+    bool report_to_db = false;
+
+    ns3::Ptr<ns3::FlowMonitor> m_flowMonitor;            // store monitor if needed
+    ns3::Ptr<ns3::Ipv4FlowClassifier> m_flowClassifier; // store classifier
+    std::map<ns3::FlowId, uint64_t> m_prevRxBytes;
+    std::map<ns3::FlowId, uint32_t> m_flowIdToImsi; // map FlowId -> IMSI index (1..N)
+    std::map<uint32_t, double> m_imsiToTp;         // map IMSI -> last throughput (Mbps)
+    std::map<uint32_t, double> m_imsiToDelay;
+    std::map<uint32_t, double> m_imsiToJitter;
+    std::map<uint32_t, double> m_imsiToPacketLoss;
+    uint32_t m_nextImsiIndex = 1;
+    Ptr<NrKpiCollector> m_KpiCollector; ///< Optional KPI collector (null = disabled)
+    std::vector<double> m_powerSamples;
+    std::vector<double> m_portPowerConfig; ///< Configured port power allocation
+    double m_currentPowerWatts; 
+// Power consumption tracking for comparison
+    bool m_xAppActive; ///< Flag to indicate if xApp has modified port configuration
+    double m_baselineMinPower; ///< Minimum power without xApp (only throughput changes)
+    double m_baselineMaxPower; ///< Maximum power without xApp (only throughput changes)
+    double m_xAppMinPower; ///< Minimum power with xApp (throughput + port changes)
+    double m_xAppMaxPower; ///< Maximum power with xApp (throughput + port changes)
+    double m_baselineCurrentPower; ///< Current power in baseline scenario (calculated)
+    double m_xAppCurrentPower; ///< Current power with xApp (actual measured)
+    Time m_xAppActivationTime; ///< Time when xApp first modified ports
+    // Add after existing power tracking variables (around line 302)
+    double m_baselineAccumulatedPower; ///< Accumulated power during baseline period (0-25s)
+    uint32_t m_baselineSampleCount; ///< Number of samples during baseline period
+    double m_xAppAccumulatedPower; ///< Accumulated power during xApp period (after 25s)
+    uint32_t m_xAppSampleCount; ///< Number of samples during xApp period
+    double m_baselineAvgPower; ///< Average power during baseline period
+    double m_xAppAvgPower; ///< Average power during xApp period
 };
 
 } // namespace ns3

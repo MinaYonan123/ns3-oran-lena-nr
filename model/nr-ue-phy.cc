@@ -3,7 +3,8 @@
 // Copyright (c) 2019 Centre Tecnologic de Telecomunicacions de Catalunya (CTTC)
 //
 // SPDX-License-Identifier: GPL-2.0-only
-
+int init_done_3500 = 0;
+int init_done_700 = 0;
 #define NS_LOG_APPEND_CONTEXT                                                                      \
     do                                                                                             \
     {                                                                                              \
@@ -28,10 +29,18 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+
+// === CSV trace to file (per UE, using IMSI) ===
+static std::map<uint64_t, std::ofstream> traceFiles;
+static std::set<uint64_t> headerWritten;
+double m_sinrAccum = 0.0;
+uint64_t m_sinrCount = 0;
 
 namespace ns3
 {
-
 const Time NR_DEFAULT_PMI_INTERVAL_WB{MilliSeconds(10)}; // Wideband PMI update interval
 const Time NR_DEFAULT_PMI_INTERVAL_SB{MilliSeconds(2)};  // Subband PMI update interval
 
@@ -46,6 +55,7 @@ NrUePhy::NrUePhy()
     m_powerControl = CreateObject<NrUePowerControl>(this);
     m_isConnected = false;
     Simulator::Schedule(m_ueMeasurementsFilterPeriod, &NrUePhy::ReportUeMeasurements, this);
+
 }
 
 NrUePhy::~NrUePhy()
@@ -80,7 +90,7 @@ NrUePhy::GetTypeId()
             .AddConstructor<NrUePhy>()
             .AddAttribute("TxPower",
                           "Transmission power in dBm",
-                          DoubleValue(2.0),
+                          DoubleValue(17.0),
                           MakeDoubleAccessor(&NrUePhy::m_txPower),
                           MakeDoubleChecker<double>())
             .AddAttribute(
@@ -193,6 +203,10 @@ NrUePhy::GetTypeId()
                             "Report UE measurements RSRP (dBm) and RSRQ (dB).",
                             MakeTraceSourceAccessor(&NrUePhy::m_reportUeMeasurements),
                             "ns3::NrUePhy::RsrpRsrqTracedCallback")
+            .AddTraceSource("CqiFeedbackTrace",
+                            "Mimo CQI feedback traces containing RNTI, WB CQI, MCS, and RI ",
+                            MakeTraceSourceAccessor(&NrUePhy::m_cqiFeedbackTrace),
+                            "ns3::NrUePhy::CqiFeedbackTracedCallback")
             .AddAttribute("EnableRlfDetection",
                           "If true, RLF detection will be enabled.",
                           BooleanValue(true),
@@ -252,8 +266,55 @@ NrUePhy::GetTxPower() const
 double
 NrUePhy::GetRsrp() const
 {
-    return m_rsrp;
+  double tmp_m_rsrp = m_avg_rsrp;
+  //m_rsrp = -999;
+  return tmp_m_rsrp;
 }
+
+    double
+    NrUePhy::GetSINR() const {
+        if (m_sinrCount == 0)
+            return m_sinr_current;
+
+        double tmp_sinr_return = m_sinrAccum / m_sinrCount;
+        m_sinrAccum = 0.0;
+        m_sinrCount = 0;
+        return tmp_sinr_return;
+    }
+
+    UeKpiInfo
+    NrUePhy::GetUEkpi() const {
+        UeKpiInfo info;
+
+        if (m_ueKpiAcc.count > 0) {
+            info.rnti = m_lastUeKpiInfo.rnti;
+            info.cqi = static_cast<uint8_t>(m_ueKpiAcc.cqiSum / m_ueKpiAcc.count);
+            info.mcs = static_cast<uint8_t>(m_ueKpiAcc.mcsSum / m_ueKpiAcc.count);
+            info.ri = static_cast<uint8_t>(m_ueKpiAcc.riSum / m_ueKpiAcc.count);
+        } else {
+            // no data yet
+            info.rnti = m_lastUeKpiInfo.rnti;
+            info.cqi = 0;
+            info.mcs = 0;
+            info.ri = 1;
+        }
+
+        // === Reset accumulators after retrieval (optional) ===
+        const_cast<NrUePhy *>(this)->m_ueKpiAcc = {};
+        const_cast<NrUePhy *>(this)->m_lastUeKpiInfo = {};
+
+        return info;
+    }
+
+/*
+Ptr<NrDlCqiMessage> NrUePhy::GetMIMOkpi() const
+{
+  Ptr<NrDlCqiMessage> prev = m_lastDlCqiMessage;
+  m_lastDlCqiMessage = nullptr;
+  return prev;
+}
+*/
+
 
 Ptr<NrUePowerControl>
 NrUePhy::GetUplinkPowerControl() const
@@ -668,7 +729,7 @@ NrUePhy::TryToPerformLbt()
                             << " which is inside the LBT shared COT (the limit is " << limit
                             << "). No need for LBT");
                 m_lbtEvent.Cancel(); // Forget any LBT we previously set, because of the new
-                                     // DCI information
+                // DCI information
                 m_channelStatus = GRANTED;
             }
             else
@@ -706,7 +767,7 @@ NrUePhy::RequestAccess()
     NS_LOG_FUNCTION(this);
     NS_LOG_DEBUG("Request access because we have to transmit UL CTRL");
     m_cam->RequestAccess(); // This will put the m_channelStatus to granted when
-                            // the channel will be granted.
+    // the channel will be granted.
 }
 
 void
@@ -1173,19 +1234,37 @@ Ptr<NrDlCqiMessage>
 NrUePhy::CreateDlCqiFeedbackMessage(const SpectrumValue& sinr)
 {
     NS_LOG_FUNCTION(this);
-    // Create DL CQI CTRL message
+
     Ptr<NrDlCqiMessage> msg = Create<NrDlCqiMessage>();
     msg->SetSourceBwp(GetBwpId());
-    DlCqiInfo dlcqi;
 
+    DlCqiInfo dlcqi;
     dlcqi.m_rnti = m_rnti;
     dlcqi.m_cqiType = DlCqiInfo::WB;
 
-    std::vector<int> cqi;
-    dlcqi.m_wbCqi = ComputeCqi(sinr);
+    // dlcqi.m_wbCqi = m_amc->CreateCqiFeedbackSiso(sinr, dlcqi.m_mcs);
+    dlcqi.m_wbCqi = m_amc->CreateCqiFeedbackWbTdma(sinr, dlcqi.m_mcs);
+
     msg->SetDlCqi(dlcqi);
-    return msg;
-}
+
+    UeKpiInfo info;
+    info.rnti = m_rnti;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = 1;
+
+    m_lastUeKpiInfo = info;
+
+        // === Accumulate for averaging ===
+        m_ueKpiAcc.cqiSum += dlcqi.m_wbCqi;
+        m_ueKpiAcc.mcsSum += dlcqi.m_mcs;
+        m_ueKpiAcc.riSum += 1;
+        m_ueKpiAcc.count++;
+
+        m_cqiFeedbackTrace(m_rnti, dlcqi.m_wbCqi, dlcqi.m_mcs, static_cast<uint8_t>(1));
+
+        return msg;
+    }
 
 void
 NrUePhy::GenerateDlCqiReport(const SpectrumValue& sinr)
@@ -1219,9 +1298,9 @@ NrUePhy::EnqueueDlHarqFeedback(const DlHarqInfo& m)
 
     auto k1It = m_harqIdToK1Map.find(m.m_harqProcessId);
 
-    NS_LOG_DEBUG("ReceiveNrDlHarqFeedback"
-                 << " Harq Process " << static_cast<uint32_t>(k1It->first)
-                 << " K1: " << k1It->second << " Frame " << m_currentSlot);
+    NS_LOG_DEBUG("ReceiveNrDlHarqFeedback" << " Harq Process " << static_cast<uint32_t>(k1It->first)
+                                           << " K1: " << k1It->second << " Frame "
+                                           << m_currentSlot);
 
     Time event = m_lastSlotStart + (GetSlotPeriod() * k1It->second);
     if (event <= Simulator::Now())
@@ -1430,6 +1509,11 @@ NrUePhy::ReportUeMeasurements()
         NrUeCphySapUser::UeMeasurementsElement newEl;
         newEl.m_cellId = (*it).first;
         newEl.m_rsrp = avg_rsrp;
+        if (GetBwpId() == 0) {
+          m_avg_rsrp = avg_rsrp;
+         // NS_LOG_UNCOND("RSRP updated for bwp_id=0");
+        }
+
         newEl.m_rsrq = avg_rsrq; // LEAVE IT 0 FOR THE MOMENT
         ret.m_ueMeasurementsList.push_back(newEl);
         ret.m_componentCarrierId = GetBwpId();
@@ -1467,6 +1551,7 @@ NrUePhy::ReportDlCtrlSinr(const SpectrumValue& sinr)
     }
 
     NS_ASSERT(rbUsed);
+    m_sinr_current= sinrSum / rbUsed;
     m_dlCtrlSinrTrace(GetCellId(), m_rnti, sinrSum / rbUsed, GetBwpId());
 }
 
@@ -1568,6 +1653,40 @@ NrUePhy::DoSetDlBandwidth(uint16_t dlBandwidth)
                  << "\t Channel bandwidth: " << GetChannelBandwidth() << " Hz" << std::endl
                  << "\t Channel central freq: " << GetCentralFrequency() << " Hz" << std::endl
                  << "\t Num. RB: " << GetRbNum());
+    if (GetRbNum() != 5 && init_done_3500 != 1 && GetCentralFrequency() == 3.5e+09)
+    {
+        NS_LOG_UNCOND("PHY reconfiguring. Result: "
+                      << std::endl
+                      << "\t TxPower: " << m_txPower << " dBm" << std::endl
+                      << "\t NoiseFigure: " << m_noiseFigure << std::endl
+                      << "\t TbDecodeLatency: " << GetTbDecodeLatency().GetMicroSeconds() << " us "
+                      << std::endl
+                      << "\t Numerology: " << GetNumerology() << std::endl
+                      << "\t SymbolsPerSlot: " << GetSymbolsPerSlot() << std::endl
+                      << "\t Pattern: " << NrPhy::GetPattern(m_tddPattern) << std::endl
+                      << "Attached to physical channel: " << std::endl
+                      << "\t Channel bandwidth: " << GetChannelBandwidth() << " Hz" << std::endl
+                      << "\t Channel central freq: " << GetCentralFrequency() << " Hz" << std::endl
+                      << "\t Num. RB: " << GetRbNum());
+        init_done_3500 = 1;
+    }
+    if (GetRbNum() != 5 && init_done_700 != 1 && GetCentralFrequency() == 7e+08)
+    {
+        NS_LOG_UNCOND("PHY reconfiguring. Result: "
+                      << std::endl
+                      << "\t TxPower: " << m_txPower << " dBm" << std::endl
+                      << "\t NoiseFigure: " << m_noiseFigure << std::endl
+                      << "\t TbDecodeLatency: " << GetTbDecodeLatency().GetMicroSeconds() << " us "
+                      << std::endl
+                      << "\t Numerology: " << GetNumerology() << std::endl
+                      << "\t SymbolsPerSlot: " << GetSymbolsPerSlot() << std::endl
+                      << "\t Pattern: " << NrPhy::GetPattern(m_tddPattern) << std::endl
+                      << "Attached to physical channel: " << std::endl
+                      << "\t Channel bandwidth: " << GetChannelBandwidth() << " Hz" << std::endl
+                      << "\t Channel central freq: " << GetCentralFrequency() << " Hz" << std::endl
+                      << "\t Num. RB: " << GetRbNum());
+        init_done_700 = 1;
+    }
 }
 
 void
@@ -1793,11 +1912,70 @@ NrUePhy::GenerateDlCqiReportMimo(const std::vector<MimoSignalChunk>& mimoChunks)
         .m_optPrecMat = cqi.m_optPrecMat,
     };
 
+    UeKpiInfo info;
+    info.rnti = m_rnti;
+    info.cqi  = dlcqi.m_wbCqi;
+    info.mcs  = dlcqi.m_mcs;
+    info.ri   = cqi.m_rank;
+
+    m_lastUeKpiInfo = info;
+
+    // === Accumulate for averaging ===
+    m_ueKpiAcc.cqiSum += dlcqi.m_wbCqi;
+    m_ueKpiAcc.mcsSum += dlcqi.m_mcs;
+    m_ueKpiAcc.riSum += dlcqi.m_ri;
+    m_ueKpiAcc.count++;
+
+    m_cqiFeedbackTrace(m_rnti, dlcqi.m_wbCqi, dlcqi.m_mcs, static_cast<uint8_t>(dlcqi.m_ri));
+
     auto msg = Create<NrDlCqiMessage>();
     msg->SetSourceBwp(GetBwpId());
     msg->SetDlCqi(dlcqi);
 
     DoSendControlMessage(msg);
+    // === CSV trace to file (per UE, using IMSI) ===
+    static std::map<uint64_t, std::ofstream> traceFiles;
+    static std::set<uint64_t> headerWritten;
+
+    auto it = traceFiles.find(m_imsi);
+    if (it == traceFiles.end())
+    {
+        std::string folderName = "trace_phy";
+        if (!std::filesystem::exists(folderName))
+        {
+            std::filesystem::create_directory(folderName);
+        }
+
+        std::stringstream fileName;
+        fileName << folderName << "/UE_" << m_imsi << "_phy_cqi_mimo.csv";
+
+        std::ofstream file(fileName.str(), std::ios::out | std::ios::app);
+        if (!file.is_open())
+        {
+            NS_LOG_UNCOND("Failed to open MIMO CQI trace file for UE " << m_imsi);
+        }
+        traceFiles[m_imsi] = std::move(file);
+        it = traceFiles.find(m_imsi);
+    }
+
+    std::ofstream& traceFile = it->second;
+
+    if (headerWritten.find(m_imsi) == headerWritten.end() && traceFile.is_open())
+    {
+        traceFile << "Time(s),UE_IMSI,UE_RNTI,CQI,MCS,RI,Mode\n";
+        headerWritten.insert(m_imsi);
+    }
+
+    if (traceFile.is_open())
+    {
+        traceFile << std::fixed << std::setprecision(3) << Simulator::Now().GetSeconds() << ","
+                  << m_imsi << "," << m_rnti << "," << static_cast<uint16_t>(dlcqi.m_wbCqi) << ","
+                  << static_cast<uint16_t>(dlcqi.m_mcs) << "," << static_cast<uint16_t>(dlcqi.m_ri)
+                  << ","
+                  << "MIMO"
+                  << "\n";
+        traceFile.flush();
+    }
 }
 
 NrPmSearch::PmiUpdate
@@ -1835,6 +2013,27 @@ Ptr<NrPmSearch>
 NrUePhy::GetPmSearch() const
 {
     return m_pmSearch;
+}
+
+bool
+NrUePhy::IsTransmitting() const
+{
+    // Check if currently transmitting based on channel status
+    return m_channelStatus == GRANTED && m_ulConfigured;
+}
+
+bool
+NrUePhy::IsReceiving() const
+{
+    // Check if currently receiving data
+    return m_receptionEnabled;
+}
+
+bool
+NrUePhy::IsConnected() const
+{
+    // Check if UE is connected to a gNB
+    return GetCellId() != 0; // Non-zero cell ID indicates connection
 }
 
 } // namespace ns3

@@ -238,6 +238,8 @@ class NrAmc : public Object
      */
     double GetBer() const;
 
+    static NrSinrMatrix ApplySinrLoss(const NrSinrMatrix& sinrMat, double lossDb);
+
   private:
     AmcModel m_amcModel;                           //!< Type of the CQI feedback model
     Ptr<NrErrorModel> m_errorModel;                //!< Pointer to an instance of ErrorModel
@@ -245,6 +247,7 @@ class NrAmc : public Object
     uint8_t m_numRefScPerRb{1};                    //!< number of reference subcarriers per RB
     NrErrorModel::Mode m_emMode{NrErrorModel::DL}; //!< Error model mode
     static const unsigned int m_crcLen = 24 / 8;   //!< CRC length (in bytes)
+    double m_implementationLossDb {0.0};
 };
 
 } // end namespace ns3

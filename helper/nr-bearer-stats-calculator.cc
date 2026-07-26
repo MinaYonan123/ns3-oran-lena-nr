@@ -390,6 +390,73 @@ NrBearerStatsCalculator::ResetResults()
 }
 
 void
+NrBearerStatsCalculator::ResetResultsForImsiLcid (uint64_t imsi, uint16_t lcid)
+{
+  NS_LOG_FUNCTION (this);
+
+  auto dlTxPacketsEntry = m_dlTxPackets.find(nr::ImsiLcidPair_t(imsi, lcid));
+  auto ulTxPacketsEntry = m_ulTxPackets.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(ulTxPacketsEntry != m_ulTxPackets.end())
+  {
+    m_ulTxPackets.erase (ulTxPacketsEntry);
+  }
+  auto ulRxPacketsEntry = m_ulRxPackets.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(ulRxPacketsEntry != m_ulRxPackets.end())
+  {
+    m_ulRxPackets.erase (ulRxPacketsEntry);
+  }
+  auto ulRxDataEntry = m_ulRxData.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(ulRxDataEntry != m_ulRxData.end())
+  {
+    m_ulRxData.erase (ulRxDataEntry);
+  }
+  auto ulTxDataEntry = m_ulTxData.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(ulTxDataEntry != m_ulTxData.end())
+  {
+    m_ulTxData.erase (ulTxDataEntry);
+  }
+  auto ulDelayEntry = m_ulDelay.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(ulDelayEntry != m_ulDelay.end())
+  {
+    m_ulDelay.erase (ulDelayEntry);
+  }
+  auto ulPduSizeEntry = m_ulPduSize.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(ulPduSizeEntry != m_ulPduSize.end())
+  {
+    m_ulPduSize.erase (ulPduSizeEntry);
+  }
+
+  if(dlTxPacketsEntry != m_dlTxPackets.end())
+  {
+    m_dlTxPackets.erase (dlTxPacketsEntry);
+  }
+  auto dlRxPacketsEntry = m_dlRxPackets.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(dlRxPacketsEntry != m_dlRxPackets.end())
+  {
+    m_dlRxPackets.erase (dlRxPacketsEntry);
+  }
+  auto dlRxDatEntry = m_dlRxData.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(dlRxDatEntry != m_dlRxData.end())
+  {
+    m_dlRxData.erase (dlRxDatEntry);
+  }
+  auto dlTxDataEntry = m_dlTxData.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(dlTxDataEntry != m_dlTxData.end())
+  {
+    m_dlTxData.erase (dlTxDataEntry);
+  }
+  auto dlDelayEntry = m_dlDelay.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(dlDelayEntry != m_dlDelay.end())
+  {
+    m_dlDelay.erase (dlDelayEntry);
+  }
+  auto dlPduSizeEntry = m_dlPduSize.find(nr::ImsiLcidPair_t(imsi, lcid));
+  if(dlPduSizeEntry != m_dlPduSize.end())
+  {
+    m_dlPduSize.erase (dlPduSizeEntry);
+  }
+}
+void
 NrBearerStatsCalculator::RescheduleEndEpoch()
 {
     NS_LOG_FUNCTION(this);

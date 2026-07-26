@@ -8,6 +8,7 @@
 #include "cc-bwp-helper.h"
 #include "ideal-beamforming-helper.h"
 #include "nr-bearer-stats-connector.h"
+#include "nr-kpi-reporting-config.h"
 #include "nr-mac-scheduling-stats.h"
 
 #include "ns3/nr-component-carrier.h"
@@ -311,6 +312,30 @@ class NrHelper : public Object
      *
      */
     void EnableTraces();
+
+    /**
+     * \brief Enable modular PHY KPI reporting for all gNBs.
+     *
+     * For each gNB device in \p gnbDevs this method:
+     *  1. Validates the requested KPI names against the registry.
+     *  2. Creates a NrKpiCollector, configures it, and connects its traces.
+     *  3. Attaches the collector to the gNB via SetPhyKpiCollector().
+     *
+     * Must be called AFTER nrHelper->EnableTraces() so that the trace sources
+     * are already registered.
+     *
+     * \param cfg      Reporting configuration (layer flags, selected KPI names,
+     *                 reporting period, file/E2 logging flags).
+     * \param gnbDevs  Container of gNB net devices.
+     * \param ueDevs   Container of UE net devices (needed to wire UE-side traces).
+     */
+    void EnableKpiReporting(const NrKpiReportingConfig& cfg,
+                            const NetDeviceContainer& gnbDevs,
+                            const NetDeviceContainer& ueDevs);
+    // Backward-compat alias
+    void EnablePhyKpiReporting(const NrKpiReportingConfig& cfg,
+                               const NetDeviceContainer& gnbDevs,
+                               const NetDeviceContainer& ueDevs);
 
     /**
      * \brief Activate a Data Radio Bearer on a given UE devices
@@ -888,6 +913,7 @@ class NrHelper : public Object
         size_t nVertPorts{1};        ///< Number of antenna ports in vertical direction
         double bearingAngle{0.0};    ///< Bearing angle in radians
         double polSlantAngle{0.0};   ///< Polarization slant angle in radians
+        std::vector<double> port_power{}; ///< Power of each antenna port
     };
 
     /// \brief parameters for the search of optimal rank and precoding matrix indicator (RI, PMI)
@@ -1066,6 +1092,10 @@ class NrHelper : public Object
     Ptr<NrMacSchedulingStats> m_macSchedStats; //!<< Pointer to NrMacStatsCalculator
     bool m_useIdealRrc;
     std::vector<OperationBandInfo> m_bands;
+
+    NetDeviceContainer m_gnbNetDeviceContainer;
+    NetDeviceContainer m_ueNetDeviceContainer;
+    
 };
 
 } // namespace ns3

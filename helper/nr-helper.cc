@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 #include "nr-helper.h"
-
+#include "ns3/node-list.h"
 #include "nr-bearer-stats-calculator.h"
 #include "nr-epc-helper.h"
+#include "nr-kpi-registry.h"
+#include "nr-kpi-collector.h"
 #include "nr-mac-rx-trace.h"
 #include "nr-phy-rx-trace.h"
 
@@ -45,6 +47,9 @@
 #include <ns3/uniform-planar-array.h>
 
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
+#include <fstream>
 
 namespace ns3
 {
@@ -540,6 +545,8 @@ NrHelper::InstallUeDevice(const NodeContainer& c,
         Ptr<NetDevice> device = InstallSingleUeDevice(node, allBwps);
         device->SetAddress(Mac48Address::Allocate());
         devices.Add(device);
+        m_ueNetDeviceContainer.Add(device); // Populate the helper's container
+
     }
     return devices;
 }
@@ -557,6 +564,7 @@ NrHelper::InstallGnbDevice(const NodeContainer& c,
         Ptr<NetDevice> device = InstallSingleGnbDevice(node, allBwps);
         device->SetAddress(Mac48Address::Allocate());
         devices.Add(device);
+        m_gnbNetDeviceContainer.Add(device); // Populate the helper's container
     }
     return devices;
 }
@@ -1066,11 +1074,22 @@ NrHelper::InstallSingleGnbDevice(
     rrc->SetForwardUpCallback(MakeCallback(&NrGnbNetDevice::Receive, dev));
     if(m_e2mode_nr) {
     const uint16_t local_port = m_e2localPort + (uint16_t) cellId;
-    const std::string gnb_id{std::to_string (cellId)};
-    
-    std::string plmnId = "111";
 
-    NS_LOG_INFO ("cell_id " << gnb_id);
+    // Encode gNB ID as 4-byte big-endian binary (cellId as uint32)
+    uint32_t gnbIdVal = (uint32_t) cellId;
+    uint8_t gnbBE[4] = {
+        (uint8_t)((gnbIdVal >> 24) & 0xFF),
+        (uint8_t)((gnbIdVal >> 16) & 0xFF),
+        (uint8_t)((gnbIdVal >>  8) & 0xFF),
+        (uint8_t)( gnbIdVal        & 0xFF)
+    };
+    const std::string gnb_id (reinterpret_cast<char*>(gnbBE), 4);
+
+    // BCD-encode PLMN: MCC=001, MNC=01 → bytes {0x00, 0xF1, 0x10}
+    uint8_t plmnBCD[3] = {0x00, 0xF1, 0x10};
+    std::string plmnId (reinterpret_cast<char*>(plmnBCD), 3);
+
+    NS_LOG_INFO ("cell_id " << cellId << " gnbId (BE) encoded, plmnId (BCD) MCC=001 MNC=01");
     Ptr<E2Termination> e2term =
         CreateObject<E2Termination> (m_e2ip, m_e2port, local_port, gnb_id, plmnId);
 
@@ -1677,7 +1696,6 @@ NrHelper::DoAssignStreamsToChannelObjects(Ptr<NrSpectrumPhy> phy, int64_t curren
     Ptr<ThreeGppSpectrumPropagationLossModel> spectrumLossModel =
         DynamicCast<ThreeGppSpectrumPropagationLossModel>(
             phy->GetSpectrumChannel()->GetPhasedArraySpectrumPropagationLossModel());
-
     if (spectrumLossModel)
     {
         if (std::find(m_channelObjectsWithAssignedStreams.begin(),
@@ -1850,6 +1868,86 @@ NrHelper::EnableTraces()
     EnableDlMacSchedTraces();
     EnableUlMacSchedTraces();
     EnablePathlossTraces();
+}
+
+void
+NrHelper::EnableKpiReporting(const NrKpiReportingConfig& cfg,
+                             const NetDeviceContainer& gnbDevs,
+                             const NetDeviceContainer& ueDevs)
+{
+    NS_LOG_FUNCTION(this);
+
+    // ---- collect all requested entries across layers ----
+    std::vector<const NrKpiRegistryEntry*> entries;
+
+    auto append = [&](bool enabled,
+                      const std::vector<std::string>& sel,
+                      NrKpiLayer layer) {
+        if (!enabled) return;
+        std::vector<std::string> req =
+            sel.empty() ? NrKpiRegistry::GetAllImplementableKpiNames(layer) : sel;
+        auto v = NrKpiRegistry::ValidateSelection(req, true);
+        entries.insert(entries.end(), v.begin(), v.end());
+    };
+
+    append(cfg.enablePhyReporting,  cfg.selectedPhyKpis,  NrKpiLayer::PHY);
+    append(cfg.enableMacReporting,  cfg.selectedMacKpis,  NrKpiLayer::MAC);
+    append(cfg.enableRlcReporting,  cfg.selectedRlcKpis,  NrKpiLayer::RLC);
+    append(cfg.enablePdcpReporting, cfg.selectedPdcpKpis, NrKpiLayer::PDCP);
+    append(cfg.enableRrcReporting,  cfg.selectedRrcKpis,  NrKpiLayer::RRC);
+
+    if (entries.empty())
+    {
+        NS_LOG_WARN("EnableKpiReporting: no valid KPIs after validation – skipping.");
+        return;
+    }
+
+    // RLC / PDCP calculators (only needed if those layers are on)
+    Ptr<NrBearerStatsCalculator> rlcCalc;
+    Ptr<NrBearerStatsCalculator> pdcpCalc;
+    if (cfg.enableRlcReporting)
+    {
+        EnableRlcE2eTraces();
+        rlcCalc = GetRlcStatsCalculator();
+    }
+    if (cfg.enablePdcpReporting)
+    {
+        EnablePdcpE2eTraces();
+        pdcpCalc = GetPdcpStatsCalculator();
+    }
+
+    for (uint32_t i = 0; i < gnbDevs.GetN(); ++i)
+    {
+        Ptr<NrGnbNetDevice> gnb = gnbDevs.Get(i)->GetObject<NrGnbNetDevice>();
+        NS_ABORT_MSG_IF(!gnb, "EnableKpiReporting: device " << i << " is not NrGnbNetDevice");
+
+        Ptr<NrKpiCollector> collector = CreateObject<NrKpiCollector>();
+        collector->Configure(entries);   // populates m_enabledKpis
+        collector->SetReportingPeriod(cfg.reportingPeriodSeconds);
+
+        if (cfg.enablePhyReporting)
+            collector->ConnectTraces(this, gnb, ueDevs);
+        if (cfg.enableMacReporting)
+            collector->ConnectMacTraces(gnb);
+        if (cfg.enableRlcReporting && rlcCalc)
+            collector->SetRlcCalculator(rlcCalc);
+        if (cfg.enablePdcpReporting && pdcpCalc)
+            collector->SetPdcpCalculator(pdcpCalc);
+        if (cfg.enableRrcReporting)
+            collector->ConnectRrcTraces(gnb, ueDevs);
+
+        gnb->SetKpiCollector(collector);
+        NS_LOG_INFO("EnableKpiReporting: attached collector to gNB "
+                    << gnb->GetCellId() << " with " << entries.size() << " KPIs.");
+    }
+}
+
+void
+NrHelper::EnablePhyKpiReporting(const NrKpiReportingConfig& cfg,
+                                const NetDeviceContainer& gnbDevs,
+                                const NetDeviceContainer& ueDevs)
+{
+    EnableKpiReporting(cfg, gnbDevs, ueDevs);
 }
 
 Ptr<NrPhyRxTrace>
@@ -2175,5 +2273,6 @@ NrHelper::SetupMimoPmi(const NrHelper::MimoPmiParams& mp)
         SetPmSearchAttribute("CodebookType", TypeIdValue(TypeId::LookupByName(mp.fullSearchCb)));
     }
 }
+
 
 } // namespace ns3

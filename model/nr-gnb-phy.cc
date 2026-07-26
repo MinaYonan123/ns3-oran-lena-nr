@@ -48,6 +48,7 @@ NrGnbPhy::NrGnbPhy()
     NS_LOG_FUNCTION(this);
     m_gnbCphySapProvider = new MemberNrGnbCphySapProvider<NrGnbPhy>(this);
     m_nrFhPhySapUser = new MemberNrFhPhySapUser<NrGnbPhy>(this);
+    Simulator::ScheduleNow(&NrGnbPhy::UpdateEnergyConsumption, this, MilliSeconds(100));
 }
 
 NrGnbPhy::~NrGnbPhy()
@@ -624,10 +625,50 @@ NrGnbPhy::SetTxPower(double pow)
     NS_LOG_DEBUG("TxPower1: " << pow);
 }
 
+void
+NrGnbPhy::SetPortPowerScaling(double scalingFactor)
+{
+    NS_LOG_FUNCTION(this << scalingFactor);
+    NS_ASSERT_MSG(scalingFactor >= 0.0 && scalingFactor <= 1.0, 
+                  "Port power scaling must be between 0.0 and 1.0");
+    m_portPowerScaling = scalingFactor;
+    NS_LOG_INFO("Port power scaling set to: " << scalingFactor 
+                << " for gNB PHY (base power: " << m_txPower << " dBm)");
+}
+
+double
+NrGnbPhy::GetPortPowerScaling() const
+{
+    NS_LOG_FUNCTION(this);
+    return m_portPowerScaling;
+}
+
+double
+NrGnbPhy::GetEffectiveTxPower() const
+{
+    NS_LOG_FUNCTION(this);
+    
+    // Calculate effective power: base_power * port_scaling
+    // In linear domain: P_eff = P_base * scaling
+    // In dB: P_eff_dB = P_base_dB + 10*log10(scaling)
+    
+    if (m_portPowerScaling <= 0.0)
+    {
+        return -std::numeric_limits<double>::infinity(); // No power if all ports off
+    }
+    
+    double effectivePowerDbm = m_txPower + 10.0 * std::log10(m_portPowerScaling);
+    
+    NS_LOG_DEBUG("Effective TX power: " << effectivePowerDbm << " dBm "
+                 << "(base: " << m_txPower << " dBm, scaling: " << m_portPowerScaling << ")");
+    
+    return effectivePowerDbm;
+}
+
 double
 NrGnbPhy::GetTxPower() const
 {
-    return m_txPower;
+    return GetEffectiveTxPower();
 }
 
 void
@@ -1002,6 +1043,26 @@ NrGnbPhy::GenerateAllocationStatistics(const SlotAllocInfo& allocInfo) const
                        GetSymbolsPerSlot() - dataSym,
                        GetBwpId(),
                        GetCellId());
+
+    // Get total OFDM symbols per slot and total REs per RB
+    uint32_t totalSymbols = GetSymbolsPerSlot(); // Typically 14 for normal CP
+    uint32_t totalRePerRb = GetNumRbPerRbg() * totalSymbols;
+
+    // Calculate normalized RB usage from RE usage
+    double dataRbUsage = static_cast<double>(dataReg) / totalRePerRb;
+    double ctrlRbUsage = static_cast<double>(ctrlReg) / totalRePerRb;
+    double totalRbUsage = dataRbUsage + ctrlRbUsage;
+
+    // Convert to PRB usage percentage
+    double prbUsagePercentage = totalRbUsage / availRb * 100.0;
+
+    // Update metrics
+    RbStats rbStats = m_RbStats; // Use existing stats object
+    rbStats.prbUsagePercentage += prbUsagePercentage;
+    rbStats.averageLastRb += totalRbUsage;
+    rbStats.iterations += 1;
+
+    m_RbStats = rbStats;
 }
 
 void
@@ -1070,6 +1131,22 @@ NrGnbPhy::PrepareRbgAllocationMap(const std::deque<VarTtiAllocInfo>& allocations
     }
 
     m_rbgAllocationPerSymDataStat.clear();
+}
+NrGnbPhy::RbStats NrGnbPhy::GetRBStats() {
+
+    RbStats rbStats_temp = {0};
+
+    rbStats_temp.cellId = m_RbStats.cellId;
+    rbStats_temp.prbUsagePercentage =
+        m_RbStats.prbUsagePercentage / m_RbStats.iterations;
+    rbStats_temp.averageLastRb = m_RbStats.averageLastRb / m_RbStats.iterations;
+    // NS_LOG_UNCOND("PRB_Usage(%)=" << rbStats_temp.prbUsagePercentage);
+
+    m_RbStats.prbUsagePercentage = 0;
+    m_RbStats.averageLastRb = 0;
+    m_RbStats.iterations = 0;
+
+    return rbStats_temp;
 }
 
 void
@@ -1954,6 +2031,83 @@ NrGnbPhy::ChannelAccessLost()
     NS_LOG_FUNCTION(this);
     NS_LOG_INFO("Channel access lost");
     m_channelStatus = NONE;
+}
+void
+NrGnbPhy::UpdateEnergyConsumption(Time interval) {
+    double power = GetCurrentPowerConsumption(); // instantaneous power
+    energyAccumulated += power * interval.GetSeconds(); // accumulate energy in Joules
+    
+    // Schedule next update
+    Simulator::Schedule(interval, &NrGnbPhy::UpdateEnergyConsumption, this, interval);
+}
+
+double
+NrGnbPhy::GetTotalEnergyConsumption() const {
+    return energyAccumulated; // in Joules
+}
+
+double
+NrGnbPhy::ComputePowerConsumption(double portScaling) const
+{
+    // 3GPP TR 38.864 §5.1 — Active DL energy consumption model (Rel-18 NES).
+    // Shared by SampleTransmitPower, KPIs, and the energy accumulator.
+    //
+    // P_DL = P_static + P_dynamic
+    // P_static = P3  (micro-sleep relative power; baseline)
+    // P_dynamic = s_a * ( P_dyn,ante + (s_f * s_p / η) * P_dyn,joint )
+    //   P_dyn,ante  = A * (P4 - P_static)
+    //   P_dyn,joint = (1 - A) * (P4 - P_static)   [with η(1,1) = 1]
+    // Absolute Watts: P = P_max * (P_rel / P4)
+    //
+    // Mapping to this simulator:
+    //   s_a = portScaling  (CCC active antenna-port / TRxRU fraction)
+    //   s_f = PRB utilization (occupied resources / max BW proxy)
+    //   s_p = 1.0          (PSD per active TxRU unchanged when ports are muted)
+    //   η   = kPaEfficiencyEta (baseline 1.0)
+
+    const double s_a = std::max(0.0, std::min(1.0, portScaling));
+    const double s_f = std::max(0.0, std::min(1.0, GetPrbUtilization()));
+    const double s_p = 1.0;
+    const double eta = kPaEfficiencyEta;
+
+    const double pStatic = kRelPowerMicroSleep; // P3
+    const double pActive = kRelPowerActiveDl;   // P4
+    const double dynBudget = pActive - pStatic; // P4 - P_static
+    const double pDynAnte = kAnteShareA * dynBudget;
+    const double pDynJoint = (1.0 - kAnteShareA) * dynBudget;
+
+    const double pDynamic = s_a * (pDynAnte + (s_f * s_p / eta) * pDynJoint);
+    const double pRel = pStatic + pDynamic;
+
+    // Configured RF TX power (dBm) → reference P_max in Watts at full Active DL.
+    const double pMaxWatts = std::pow(10.0, (m_txPower - 30.0) / 10.0);
+    return pMaxWatts * (pRel / pActive);
+}
+
+double
+NrGnbPhy::GetCurrentPowerConsumption() const
+{
+    return ComputePowerConsumption(m_portPowerScaling);
+}
+
+double
+NrGnbPhy::CalculateActivityFactor() const
+{
+    return GetPrbUtilization();
+}
+
+double
+NrGnbPhy::GetPrbUtilization() const
+{
+    // Use the slot-level RB statistics collected by the scheduler (non-destructive).
+    // Prefer the live accumulating window; if E2 just reset it (iterations==0),
+    // use m_lastPrbUtil which GetRBStats() refreshes on every consume.
+    if (m_RbStats.iterations > 0)
+    {
+        double util = (m_RbStats.prbUsagePercentage / m_RbStats.iterations) / 100.0;
+        m_lastPrbUtil = std::max(0.0, std::min(1.0, util));
+    }
+    return m_lastPrbUtil;
 }
 
 } // namespace ns3

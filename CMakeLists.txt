@@ -19,6 +19,8 @@ set(source_files
     ${eigen_sources}
     helper/beamforming-helper-base.cc
     helper/cc-bwp-helper.cc
+    helper/nr-kpi-registry.cc
+    helper/nr-kpi-collector.cc
     helper/file-scenario-helper.cc
     helper/grid-scenario-helper.cc
     helper/hexagonal-grid-scenario-helper.cc
@@ -189,6 +191,10 @@ set(source_files
 set(header_files
     helper/beamforming-helper-base.h
     helper/cc-bwp-helper.h
+    helper/nr-kpi-registry.h
+    helper/nr-kpi-reporting-config.h
+    helper/nr-kpi-sample.h
+    helper/nr-kpi-collector.h
     helper/file-scenario-helper.h
     helper/grid-scenario-helper.h
     helper/hexagonal-grid-scenario-helper.h
@@ -447,22 +453,30 @@ set(test_sources
     # cmake-format: on
 )
 
+find_package(CURL REQUIRED)
+
+if (CURL_FOUND)
+  include_directories(${CURL_INCLUDE_DIRS})
+  list(APPEND EXTRA_LIBS ${CURL_LIBRARIES})
+endif()
+
 build_lib(
-  LIBNAME nr
-  SOURCE_FILES ${source_files}
-  HEADER_FILES ${header_files}
-  LIBRARIES_TO_LINK
-    ${libinternet-apps}
-    ${libflow-monitor}
-    ${libspectrum}
-    ${libbuildings}
-    ${libvirtual-net-device}
-    ${libpoint-to-point}
-    ${libapplications}
-    ${libcsma}
-    ${libconfig-store}
-    ${liboran-interface}
-  TEST_SOURCES ${test_sources}
+        LIBNAME nr
+        SOURCE_FILES ${source_files}
+        HEADER_FILES ${header_files}
+        LIBRARIES_TO_LINK
+        ${libinternet-apps}
+        ${libflow-monitor}
+        ${libspectrum}
+        ${libbuildings}
+        ${libvirtual-net-device}
+        ${libpoint-to-point}
+        ${libapplications}
+        ${libcsma}
+        ${libconfig-store}
+        ${liboran-interface}
+        ${CURL_LIBRARIES}
+        TEST_SOURCES ${test_sources}
 )
 
 # Get path src/nr or contrib/nr

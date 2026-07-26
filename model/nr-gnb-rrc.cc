@@ -2239,6 +2239,30 @@ NrGnbRrc::GetNrGnbCphySapUser(uint8_t pos)
     return m_cphySapUser.at(pos);
 }
 
+std::map<uint16_t, Ptr<NrUeManager> >
+NrGnbRrc::GetUeMap() const
+{
+  return m_ueMap;
+}
+
+uint32_t
+NrGnbRrc::GetNumberOfConnectedUes() const
+{
+  return m_ueMap.size();
+}
+
+std::map <uint8_t, Ptr<NrDataRadioBearerInfo> > 
+NrUeManager::GetDrbMap () const
+{
+  return m_drbMap;
+}
+
+// std::map <uint8_t, Ptr<NrDataRadioBearerInfo> > 
+// NrUeManager::GetRlcMap () const
+// {
+//   return m_rlcMap;
+// }
+
 bool
 NrGnbRrc::HasUeManager(uint16_t rnti) const
 {

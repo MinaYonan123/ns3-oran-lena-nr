@@ -12,6 +12,7 @@
 #include "nr-harq-phy.h"
 #include "nr-phy-sap.h"
 #include "nr-phy.h"
+#include "ns3/core-module.h"
 
 #include <functional>
 
@@ -92,6 +93,16 @@ class NrGnbPhy : public NrPhy
     friend class NrMemberPhySapProvider;
 
   public:
+    /**
+     * Power model constants from 3GPP TR 38.864 §5.1 (Rel-18 Network Energy Savings).
+     * Relative powers: BS Category 1, Reference Configuration Set 1 (FR1 TDD macro mMIMO).
+     * Active DL: P = P_static + P_dynamic, with spatial (s_a), frequency (s_f), power (s_p) scaling.
+     */
+    static constexpr double kRelPowerMicroSleep = 55.0;  ///< P3 — micro-sleep relative power (static baseline)
+    static constexpr double kRelPowerActiveDl   = 280.0; ///< P4 — Active DL relative power (full reference)
+    static constexpr double kAnteShareA         = 0.4;   ///< A — antenna/ante share of dynamic power (baseline)
+    static constexpr double kPaEfficiencyEta   = 1.0;   ///< η(s_f, s_p) — PA efficiency factor (baseline = 1)
+
     /**
      * \brief Get Type id
      * \return the type id of the NrGnbPhy
@@ -212,7 +223,23 @@ class NrGnbPhy : public NrPhy
      * \return the TX power of the gNB
      */
     double GetTxPower() const override;
+    /** 
+    * \brief Set port power scaling factor for effective transmit power calculation
+    * \param scalingFactor Port power scaling factor (0.0 to 1.0)
+    */
+    void SetPortPowerScaling(double scalingFactor);
 
+    /**
+    * \brief Get port power scaling factor
+    * \return Port power scaling factor
+    */
+    double GetPortPowerScaling() const;
+
+    /**
+    * \brief Get effective transmit power accounting for port power allocation
+    * \return Effective TX power in dBm (base power * port scaling)
+    */
+    double GetEffectiveTxPower() const;
     /**
      * \brief Set the Tx power spectral density based on the RB index vector
      * \param rbIndexVector vector of the index of the RB (in SpectrumValue array)
@@ -413,6 +440,57 @@ class NrGnbPhy : public NrPhy
      */
     void ChangeToQuasiOmniBeamformingVector();
 
+    /**
+     * \brief Compute Active-DL power (Watts) per 3GPP TR 38.864 §5.1.
+     * \param portScaling s_a — fraction of active TRxRUs / antenna ports in [0,1] (from CCC)
+     * \return Instantaneous power in Watts (scaled from configured TX power P_max)
+     *
+     * Uses TR 38.864 baseline Active DL model:
+     *   P_rel = P_static + s_a * ( P_dyn,ante + (s_f * s_p / η) * P_dyn,joint )
+     *   P_watts = P_max * (P_rel / P4)
+     * where s_f is PRB utilization and s_p = 1 (PSD per TxRU unchanged under port muting).
+     */
+    double ComputePowerConsumption(double portScaling) const;
+
+    /**
+     * \brief Get the current power consumption of this PHY (in Watts)
+     * \return Current power using m_portPowerScaling
+     */
+    double GetCurrentPowerConsumption() const;
+
+    /**
+     * \brief Get total accumulated energy consumption (in Joules)
+     * \return Total energy consumed since start
+     */
+    double GetTotalEnergyConsumption() const;
+
+    /**
+     * \brief Update energy consumption accumulator
+     * \param interval Time interval for the update
+     */
+    void UpdateEnergyConsumption(Time interval);
+
+    /**
+     * \brief Calculate current activity factor based on resource usage
+     * \return Activity factor between 0.0 and 1.0
+     */
+    double CalculateActivityFactor() const;
+
+    /**
+     * \brief Get current PRB utilization ratio
+     * \return PRB utilization between 0.0 and 1.0
+     */
+    double GetPrbUtilization() const;
+
+    struct RbStats {
+      uint16_t cellId = 0;         // Cell ID
+      double prbUsagePercentage = 0; // PRB usage percentage
+      double averageLastRb= 0;    // Store the average value of the last RBG
+      int iterations = 0;
+    };
+
+    RbStats GetRBStats();
+    
   protected:
     /**
      * \brief DoDispose method inherited from Object
@@ -426,6 +504,10 @@ class NrGnbPhy : public NrPhy
     NrFhPhySapProvider* m_nrFhPhySapProvider{nullptr}; //!< FH Control SAP provider
 
   private:
+    private:
+    double m_portPowerScaling{1.0};        //!< Port power scaling factor (activePorts/totalPorts)
+    mutable double m_lastPrbUtil{0.0};     //!< Last valid PRB utilisation (cache for when m_RbStats resets)
+      double energyAccumulated = 0.0; // in Joules
     /**
      * \brief Set the current slot pattern (better to call it only once..)
      * \param pattern the pattern
@@ -833,6 +915,7 @@ class NrGnbPhy : public NrPhy
     bool m_isPrimary{false}; //!< Is this PHY a primary phy?
 
     Time m_lastBfChange; //!< Saves the timestamp when the beamforming vector changes.
+    mutable RbStats m_RbStats; // store RBStats
 };
 
 } // namespace ns3
